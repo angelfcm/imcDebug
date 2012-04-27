@@ -1,0 +1,208 @@
+/* Clase constructora encargada de hacer las consultas a los archivos, 
+   obtiendo datos y modificandolos usando el DOM. */
+function imcDebugModel(selectorsNS) 
+{
+    if ( !this.init ) {
+        alert('Debe ser un objeto, se debe instanciar.');
+    }
+    this.init(selectorsNS);
+}
+
+imcDebugModel.prototype = 
+{
+
+    /* Metodo inicializador */
+    init: function(selectorsNS) 
+    {
+        this.host = 'imcmexico.com';
+        if( this.host.indexOf(location.toString()) == -1 ) {
+            /* alert('El host no coincide con '+this.host); */
+        }
+        this.selectors = {
+            ns        : selectorsNS,
+            queryFiles: {}
+        };
+        
+        /* Se definen los archivos para las consultas de tipos, marcas y modelos de maquinas. */
+        var ns         = this.selectors.ns;
+        var queryFiles = this.selectors.queryFiles;
+ 
+        queryFiles[ns[0]] = 'tiposJX.php';
+        queryFiles[ns[1]] = 'marcasJX.php';
+        queryFiles[ns[2]] = 'modelosJX.php';
+        
+        /* Creamos el iframe para las consultas de los datos. */
+        jQuery('body').append('<iframe name="imcDebugModel_queryFrame" style="display:none;"></iframe>');
+        this.queryFrame = window.imcDebugModel_queryFrame;
+        this.$queryFrame= $('iframe[name=imcDebugModel_queryFrame]');
+    },
+
+    /* Devulve los datos para X selector (tipos, marcas y modelos) */
+    getSelectorData: function(selectorNS, urlGetData, onreadyFunction, onreadyFunctionArgument) 
+    {
+        var queryFile = this.selectors.queryFiles[selectorNS];
+        
+        /* Abrimos el archivo con la consulta del selector y definimos la funcion al cargarse el contenido. */
+        this.$queryFrame.attr('src', this.host+'/'+queryFile+'?'+urlGetData);
+        var This = this;
+        
+        this.$queryFrame.load( function() {
+        
+            /* Obtenemos el texto de las celdas que contienen los tipos, marcas o modelos. */
+            var notFixedData = jQuery('.itemlistagen', This.queryFrame.document)
+                               .find('td:first')
+                               .text()
+                               /* Separamos por ese caracter similar al espacio. */
+                               .split('xA0');
+            var fixedData    = [];
+            
+            /* Filtramos la matriz para obtener solamente lo que necesitamos y no valores en blanco. */
+            jQuery.each(notFixedData, function(i, value){
+                if(value){ 
+                    fixedData.push({value: value, text: value}); 
+                }
+            });
+            
+            /* Llamamos la funcion argumentada y pasamos el argumento argumentado. */
+            onreadyFunction(fixedData, onreadyFunctionArgument);
+        });
+    }
+
+};
+
+/* Clase constructora encarga de controlar el modelo y la vista, 
+   quien decidira que accion tomar afectando la base de datos y la vista de la aplicación. */
+function imcDebugController() 
+{
+    if ( !this.init ) {
+        alert('Debe ser un objeto, se debe instanciar.');
+    }
+    this.init();
+}
+
+imcDebugController.prototype =  
+{
+
+    /* Inicializador */
+    init: function()
+    {
+        /* Namespaces para los tipos, marcas y modelos */
+        this.selectorsNS = ['type', 'mark', 'model'];
+        /* Texto de salida para leer los nombres de selectores */
+        this.selectorsES = ['tipo', 'marca', 'modelo'];
+        /* Se crean los objetos para el modelo y la vista y se ejecuta la accion por default. */
+        this.model       = new imcDebugModel(this.selectorsNS);
+        this.view        = new imcDebugView(this.selectorsNS, this.selectorsES);
+        this.indexAction();
+    },
+    
+    /* Acción por default */
+    indexAction: function()
+    {
+        /* Seleccionamos el nombre del selector para tipos de maquinas 
+           y obtenemos los valores del mismo para llenar el selector. */
+        var selector = this.selectorsNS[0];
+        
+        this.model.getSelectorData(selector, '', function(resultData, arg) {
+            /* Llenamos el selector */
+            arg.This.view.fillSelector(arg.selector, resultData);
+            
+        }, { This: this, selector: selector } );
+    }
+    
+};
+    
+/* Clase constructora encarga de manipular y crear el DOM y salida de texto para la aplicación. */
+function imcDebugView(selectorsNS, selectorsES) 
+{
+    if ( !this.init ) {
+        alert('Debe ser un objeto, se debe instanciar.');
+    }
+    this.init(selectorsNS, selectorsES);
+}
+    
+imcDebugView.prototype = 
+{
+    
+    /* Inicializador */
+    init: function(selectorsNS, selectorsES) 
+    {
+        /* Definiendo los namespaces pasados por argumentos y los objetos DOM para los selectores visuales. */
+        this.selectors = {
+            ns    : selectorsNS,
+            es    : selectorsES,
+            $type : jQuery('#imcDebugTypeSelector'),
+            $mark : jQuery('#imcDebugMarkSelector'),
+            $model: jQuery('#imcDebugModelSelector')
+        };
+    },
+    
+    /* Hace una acción ejecutando un método del objeto pasado por argumento y 
+       pasandole el argumento argumentado.
+       si es que aun hay otro selector inferior, ej. 'Tipo'->'Marca'->'Modelo' */
+    doNextSelector: function(ns, methodName, arg) {
+       var indexNS        = jQuery.inArray(ns, this.selectors.ns);
+       var nextSelectorNS = this.selectors.ns[indexNS+1];
+       if( nextSelectorNS ) {
+           this[methodName](nextSelectorNS, arg);
+       }
+    },
+
+    /* Llena las opciones de X selector con los datos argumentados en forma [{value:'',text:''},...] */
+    fillSelector: function(selectorNS, data)
+    {
+        var $selector  = this.selectors['$'+selectorNS];
+        var selectorES = jQuery.inArray( selectorNS, this.selectors.ns );
+            selectorES = this.selectors.es[selectorES];
+        var options    = '<option value="" selected="selected">Seleccione '+selectorES+'</option>';
+
+        this.clearSelector(selectorNS)
+            .disableSelector(selectorNS, false);
+        
+        jQuery.each(data, function(i, data) {
+            options += '<option value="'+data.value+'">'+data.text+'</option>';
+        });       
+        console.log(options);
+    },
+
+    /* Limpia el selector argumentado y los que le siguen. */
+    clearSelector: function(selectorNS) 
+    {
+        var $selector = this.selectors['$'+selectorNS];
+        
+        $selector.html('');
+        this.doNextSelector(selectorNS, 'clearSelector');
+
+        return this;
+    },
+    
+    /* Deshabilita/habilita el selector argumentado y los que le siguen. */
+    disableSelector: function(selectorNS, disable) 
+    {
+        var $selector = this.selectors['$'+selectorNS];
+        
+        $selector.attr('disabled', disable);
+        this.doNextSelector(selectorNS, 'disableSelector', true);
+
+        return this;
+    }
+    
+};
+
+    /* Se inicializa el objeto de la aplicacion, se supone que el DOM ya esta
+       listo al ejecutarlo en la pagina */ 
+    if ( !window.jQuery ) {
+    
+        var scriptjQuery = document.createElement('script');
+        scriptjQuery.type= 'text/javascript';
+        scriptjQuery.src = 'https://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js';
+
+        document.body.appendChild(scriptjQuery);
+        
+        new imcDebugController();
+        
+    } else {
+        jQuery(function(){
+            new imcDebugController();
+        });
+    }

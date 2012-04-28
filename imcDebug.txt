@@ -43,7 +43,7 @@ imcDebugModel.prototype =
         var queryFile = this.selectors.queryFiles[selectorNS];
         
         /* Abrimos el archivo con la consulta del selector y definimos la funcion al cargarse el contenido. */
-        this.$queryFrame.attr('src', this.host+'/'+queryFile+'?'+urlGetData);
+        this.$queryFrame.attr('src', queryFile+'?'+urlGetData);
         var This = this;
         
         this.$queryFrame.load( function() {
@@ -53,12 +53,13 @@ imcDebugModel.prototype =
                                .find('td:first')
                                .text()
                                /* Separamos por ese caracter similar al espacio. */
-                               .split('xA0');
+                               .split('\xA0');
             var fixedData    = [];
             
             /* Filtramos la matriz para obtener solamente lo que necesitamos y no valores en blanco. */
             jQuery.each(notFixedData, function(i, value){
                 if(value){ 
+                    var value = jQuery.trim(value);
                     fixedData.push({value: value, text: value}); 
                 }
             });
@@ -196,7 +197,6 @@ imcDebugView.prototype =
         var scriptjQuery = document.createElement('script');
         scriptjQuery.type= 'text/javascript';
         scriptjQuery.src = 'https://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js';
-
         document.body.appendChild(scriptjQuery);
         
         new imcDebugController();

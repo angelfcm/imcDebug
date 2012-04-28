@@ -48,20 +48,18 @@ imcDebugModel.prototype =
         
         this.$queryFrame.load( function() {
         
-            /* Obtenemos el texto de las celdas que contienen los tipos, marcas o modelos. */
-            var notFixedData = jQuery('.itemlistagen', This.queryFrame.document)
-                               .find('td:first')
-                               .text()
-                               /* Separamos por ese caracter similar al espacio. */
-                               .split('\xA0');
-            var fixedData    = [];
+            /* Filas contenedoras de los datos para tipos, marcas y modelos. */
+            var $dataRows = jQuery('.itemlistagen', This.queryFrame.document);
+            var fixedData = [];
             
-            /* Filtramos la matriz para obtener solamente lo que necesitamos y no valores en blanco. */
-            jQuery.each(notFixedData, function(i, value){
-                if(value){ 
-                    var value = jQuery.trim(value);
-                    fixedData.push({value: value, text: value}); 
-                }
+            /* Guardamos en fixedData el valor, texto y numero que existe de cada tipo, marca o modelo. */
+            jQuery.each($dataRows, function(i, row){
+                var $row   = jQuery(row);
+                var value  = jQuery.trim( $row.find('td:first').text() );
+                var text   = value;
+                var number = jQuery.trim( $row.find('td:last').text() ); 
+                
+                fixedData.push({value: value, text: value, number: number}); 
             });
             
             /* Llamamos la funcion argumentada y pasamos el argumento argumentado. */
@@ -163,7 +161,8 @@ imcDebugView.prototype =
         jQuery.each(data, function(i, data) {
             options += '<option value="'+data.value+'">'+data.text+'</option>';
         });       
-        console.log(options);
+        
+        $selector.append(options);
     },
 
     /* Limpia el selector argumentado y los que le siguen. */

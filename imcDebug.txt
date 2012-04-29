@@ -14,6 +14,7 @@ imcDebugModel.prototype =
     /* Metodo inicializador */
     init: function(selectorsNS) 
     {
+
         this.host = 'imcmexico.com';
         if( this.host.indexOf(location.toString()) == -1 ) {
             /* alert('El host no coincide con '+this.host); */
@@ -46,6 +47,7 @@ imcDebugModel.prototype =
         this.$queryFrame.attr('src', queryFile+'?'+urlGetData);
         var This = this;
         
+        this.$queryFrame.unbind('load');
         this.$queryFrame.load( function() {
         
             /* Filas contenedoras de los datos para tipos, marcas y modelos. */
@@ -59,7 +61,9 @@ imcDebugModel.prototype =
                 var text   = value;
                 var number = jQuery.trim( $row.find('td:last').text() ); 
                 
-                fixedData.push({value: value, text: value, number: number}); 
+                if ( value ) {
+                    fixedData.push({value: value, text: value, number: number}); 
+                }
             });
             
             /* Llamamos la funcion argumentada y pasamos el resultado obtenido. */
@@ -89,49 +93,71 @@ imcDebugController.prototype =
         this.selectorsNS = ['type', 'mark', 'model'];
         /* Texto de salida para leer los nombres de selectores */
         this.selectorsES = ['tipo', 'marca', 'modelo'];
+
+        this.debugConfig = {
+            selectors : {'type': '', 'mark': '', 'model': ''},
+            phases    : {}
+        }
         /* Se crean los objetos para el modelo y la vista y se ejecuta la accion por default. */
         this.model       = new imcDebugModel(this.selectorsNS);
-        this.view        = new imcDebugView(this.selectorsNS, this.selectorsES);
+        this.view        = new imcDebugView(this, this.selectorsNS, this.selectorsES);
         this.indexAction();
     },
     
     /* Acción por default */
     indexAction: function()
     {
-        /* Accionamos el selectAction por default al selector de tipos de máquinas. */  
-        this.selectAction(this.selectorsNS[0]);
+        /* Accionamos el selectAction por default al selector de tipos de máquinas. */ 
+        this.fillSelectorAction(this.selectorsNS[0]);
     },
 
-    selectAction: function(selectorNS)
+    selectSelectorAction: function(selectorNS, value)
     {
+        this.debugConfig.selectors[selectorNS] = value;
+        
+        var selectorIndex = jQuery.inArray(selectorNS, this.selectorsNS);
+        var nextSelector  = this.selectorsNS[selectorIndex+1];
+        if ( nextSelector ) {
+            this.fillSelectorAction(nextSelector);
+        }
+    },
+
+    fillSelectorAction: function(selectorNS) {
         var This = this;
-        this.model.getSelectorData(selector, '', function(resultData) {
+        var urlGetData = 'tipo='+this.debugConfig.selectors[this.selectorsNS[0]]
+                         +'&marca='+this.debugConfig.selectors[this.selectorsNS[1]];
+
+        this.view.showProcessIndicator(true);
+        this.model.getSelectorData(selectorNS, urlGetData, function(resultData) {
             /* Llenamos el selector */
-            This.view.fillSelector(selector, resultData);
-        });    
+            This.view.fillSelector(selectorNS, resultData);
+            This.view.showProcessIndicator(false);
+        });  
     }
     
 };
     
 /* Clase constructora encarga de manipular y crear el DOM y salida de texto para la aplicación. */
-function imcDebugView(selectorsNS, selectorsES) 
+function imcDebugView(Controller, selectorsNS, selectorsES) 
 {
     if ( !this.init ) {
         alert('Debe ser un objeto, se debe instanciar.');
     }
-    this.init(selectorsNS, selectorsES);
+    this.init(Controller, selectorsNS, selectorsES);
 }
     
 imcDebugView.prototype = 
 {
     
     /* Inicializador */
-    init: function(selectorsNS, selectorsES) 
+    init: function(Controller, selectorsNS, selectorsES) 
     {
+        this.Controller = Controller;
         this.selectors = {
             ns: selectorsNS,
             es: selectorsES
         };
+        this.processInterval = '';
 
         /* Definiendo los identificadores para el DOM de la aplicación.*/
         this.domNSID = 'imcDebugView';
@@ -140,18 +166,20 @@ imcDebugView.prototype =
             ctSettings  : this.domNSID+'-settings',
             ctSelectors: this.domNSID+'-selectors',
             ctPhases   : this.domNSID+'-phases',
+            ctControls : this.domNSID+'-controls',
             phase1     : this.domNSID+'-phase1',
             phase2     : this.domNSID+'-phase2',
             phase3     : this.domNSID+'-phase3',
             close      : this.domNSID+'-close',
             start      : this.donNSID+'-start',
-            pause      : this.domNSID+'-pause'
+            pause      : this.domNSID+'-pause',
+            process    : this.domNSID+'-process'
         };
 
         /* Identificadores y codigo del DOM para los selectores dependiendo de la cantidad de los mismos. */
         var selectorsDomCode = ''; var This = this;
         jQuery.each(this.selectors.ns, function(i, ns) {
-            This.domIDs[ns]   = This.domNSID+'-'+ns+'Selector';
+            This.domIDs[ns]   = This.domNSID+'-'+ns;
             selectorsDomCode += '           <select id="'+This.domIDs[ns]+'"></select>\n';
         });
 
@@ -166,7 +194,7 @@ imcDebugView.prototype =
         /* Añadimos el código fuente DOM de la aplicación con sus identificadores. */
         jQuery('body').append(
             '\n\n<div id="'+this.domIDs.ct+'">\n'+
-            '   <button id="'+this.domIDs.close+'">Cerrar</button>\n'+
+            '   <button id="'+this.domIDs.close+'">Cerrar</button><span id="'+this.domIDs.process+'"></span>\n'+
             '   <h1>Depurador de máquinas</h1>\n'+
             '   <div id="'+this.domIDs.ctSettings+'">\n'+
             '       <div id="'+this.domIDs.ctSelectors+'">\n'+
@@ -249,11 +277,32 @@ imcDebugView.prototype =
             '#'+this.domIDs.ctControls+' button {\n'+
             '    \n'+
             '}\n'+
+            '#'+this.domIDs.process+' {\n'+
+            '    position  : absolute;\n'+
+            '    left      : 0;\n'+
+            '    bottom    : 0;\n'+
+            '    display   : none;\n'+
+            '    font-size : 22px\n'+
+            '}\n'+
             '</style>\n\n'
         );
         /* Deshabilitamos los selectores al inicio de la aplicación para evitar un seleccionamiento inesperado. */
         this.disableSelector(this.selectors.ns[0], true);
 
+        var This = this;
+        jQuery('#'+this.domIDs.ctSelectors).find('select').change(function(){
+
+            var selectorNS = this.id.replace(/.*-/i, '');
+            This.disableSelector(selectorNS, false)
+                .doNextSelector(selectorNS, 'clearSelector');
+
+            if ( !this.value ) {
+                return;
+            }
+
+            This.Controller.selectSelectorAction(selectorNS, this.value);
+
+        });
     },
     
     /* Hace una acción ejecutando un método del objeto pasado por argumento y 
@@ -288,6 +337,7 @@ imcDebugView.prototype =
     /* Limpia el selector argumentado y los que le siguen. */
     clearSelector: function(selectorNS) 
     {
+        this.Controller.debugConfig.selectors[selectorNS] = '';
         var $selector = jQuery('#'+this.domIDs[selectorNS]);
         
         $selector.html('');
@@ -305,10 +355,35 @@ imcDebugView.prototype =
         this.doNextSelector(selectorNS, 'disableSelector', true);
 
         return this;
+    },
+
+    showProcessIndicator: function(show) {
+
+        var $process = jQuery('#'+this.domIDs.process);
+        $process.text('');
+        if ( show ) {
+            var text = ' ...';
+            var i    = 0;
+            $process.css('display', 'inline');
+
+            this.processInterval = setInterval(function(){
+                if( i+1 > text.length ) {
+                    $process.text('');
+                    i = 0;
+                }
+                $process.append(text.charAt(i++));
+
+            }, 300);
+
+        } else {
+            $process.css('display', 'none');
+            clearInterval(this.processInterval);
+        }
+
     }
     
 };
-
+var imcDebug;
     /* Se inicializa el objeto de la aplicacion, se supone que el DOM ya esta
        listo al ejecutarlo en la pagina */ 
     if ( !window.jQuery ) {
@@ -319,10 +394,10 @@ imcDebugView.prototype =
         document.body.appendChild(scriptjQuery);
         
         scriptjQuery.onload = function() {
-            new imcDebugController();
+            imcDebug = new imcDebugController();
         }
     } else {
         jQuery(function(){
-            new imcDebugController();
+            imcDebug = new imcDebugController();
         });
     }

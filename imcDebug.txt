@@ -34,11 +34,11 @@ imcDebugModel.prototype =
         /* Creamos el iframe para las consultas de los datos. */
         jQuery('body').append('<iframe name="imcDebugModel_queryFrame" style="display:none;"></iframe>');
         this.queryFrame = window.imcDebugModel_queryFrame;
-        this.$queryFrame= $('iframe[name=imcDebugModel_queryFrame]');
+        this.$queryFrame= jQuery('iframe[name=imcDebugModel_queryFrame]');
     },
 
     /* Devulve los datos para X selector (tipos, marcas y modelos) */
-    getSelectorData: function(selectorNS, urlGetData, onreadyFunction, onreadyFunctionArgument) 
+    getSelectorData: function(selectorNS, urlGetData, onreadyFunction) 
     {
         var queryFile = this.selectors.queryFiles[selectorNS];
         
@@ -62,8 +62,8 @@ imcDebugModel.prototype =
                 fixedData.push({value: value, text: value, number: number}); 
             });
             
-            /* Llamamos la funcion argumentada y pasamos el argumento argumentado. */
-            onreadyFunction(fixedData, onreadyFunctionArgument);
+            /* Llamamos la funcion argumentada y pasamos el resultado obtenido. */
+            onreadyFunction(fixedData);
         });
     }
 
@@ -98,15 +98,17 @@ imcDebugController.prototype =
     /* Acción por default */
     indexAction: function()
     {
-        /* Seleccionamos el nombre del selector para tipos de maquinas 
-           y obtenemos los valores del mismo para llenar el selector. */
-        var selector = this.selectorsNS[0];
-        
-        this.model.getSelectorData(selector, '', function(resultData, arg) {
+        /* Accionamos el selectAction por default al selector de tipos de máquinas. */  
+        this.selectAction(this.selectorsNS[0]);
+    },
+
+    selectAction: function(selectorNS)
+    {
+        var This = this;
+        this.model.getSelectorData(selector, '', function(resultData) {
             /* Llenamos el selector */
-            arg.This.view.fillSelector(arg.selector, resultData);
-            
-        }, { This: this, selector: selector } );
+            This.view.fillSelector(selector, resultData);
+        });    
     }
     
 };
@@ -126,14 +128,132 @@ imcDebugView.prototype =
     /* Inicializador */
     init: function(selectorsNS, selectorsES) 
     {
-        /* Definiendo los namespaces pasados por argumentos y los objetos DOM para los selectores visuales. */
         this.selectors = {
-            ns    : selectorsNS,
-            es    : selectorsES,
-            $type : jQuery('#imcDebugTypeSelector'),
-            $mark : jQuery('#imcDebugMarkSelector'),
-            $model: jQuery('#imcDebugModelSelector')
+            ns: selectorsNS,
+            es: selectorsES
         };
+
+        /* Definiendo los identificadores para el DOM de la aplicación.*/
+        this.domNSID = 'imcDebugView';
+        this.domIDs  = {
+            ct         : this.domNSID,
+            ctSettings  : this.domNSID+'-settings',
+            ctSelectors: this.domNSID+'-selectors',
+            ctPhases   : this.domNSID+'-phases',
+            phase1     : this.domNSID+'-phase1',
+            phase2     : this.domNSID+'-phase2',
+            phase3     : this.domNSID+'-phase3',
+            close      : this.domNSID+'-close',
+            start      : this.donNSID+'-start',
+            pause      : this.domNSID+'-pause'
+        };
+
+        /* Identificadores y codigo del DOM para los selectores dependiendo de la cantidad de los mismos. */
+        var selectorsDomCode = ''; var This = this;
+        jQuery.each(this.selectors.ns, function(i, ns) {
+            This.domIDs[ns]   = This.domNSID+'-'+ns+'Selector';
+            selectorsDomCode += '           <select id="'+This.domIDs[ns]+'"></select>\n';
+        });
+
+        /* Identificadores para los checkbox para las fases a depurar. Que son 3. */
+        var phasesCheckBoxesDomCode = '', pCBDCSeparators = ['           ', '           | ', '           | '], This = this;
+        jQuery.each(pCBDCSeparators, function(i, separator) {
+            var phaseID              = This.domIDs['phase'+(i+1)];
+            var phaseText            = 'Fase '+(i+1)+' ';
+            phasesCheckBoxesDomCode += separator+'<label for="'+phaseID+'">'+phaseText+'</label><input type="checkbox" id="'+phaseID+'" />\n';
+        });
+
+        /* Añadimos el código fuente DOM de la aplicación con sus identificadores. */
+        jQuery('body').append(
+            '\n\n<div id="'+this.domIDs.ct+'">\n'+
+            '   <button id="'+this.domIDs.close+'">Cerrar</button>\n'+
+            '   <h1>Depurador de máquinas</h1>\n'+
+            '   <div id="'+this.domIDs.ctSettings+'">\n'+
+            '       <div id="'+this.domIDs.ctSelectors+'">\n'+
+            selectorsDomCode+
+            '       </div>\n'+
+            '       <div id="'+this.domIDs.ctPhases+'">\n'+
+            phasesCheckBoxesDomCode+
+            '       </div>\n'+
+            '   </div>\n'+
+            '   <div id="'+this.domIDs.ctControls+'">'+
+            '       <button id="'+this.domIDs.pause+'">Pausar</button><button id="'+this.domIDs.start+'">Iniciar</button>'+
+            '   </div>'+
+            '</div>\n'
+        );
+        /* Estilos para el DOM de la aplicación. */
+        jQuery('body').append(
+            '<style type="text/css">\n'+
+            '#'+this.domIDs.ct+' {\n'+
+            '    position      : fixed;\n'+
+            '    top           : 10px;\n'+
+            '    right         : 10px;\n'+ 
+            '    border        : 1px solid #000;\n'+ 
+            '    border-radius : 5px;\n'+ 
+            '    padding       : 5px;\n'+
+            '    background    : #f7faff;\n'+
+            '}\n'+
+            '#'+this.domIDs.ct+' *, -moz-focus-inner {\n'+
+            '    font-family   : calibri;\n'+
+            '    margin        : 0;\n'+
+            '    padding       : 0;\n'+ 
+            '}\n'+
+            '#'+this.domIDs.ct+' button {\n'+
+            '    cursor        : pointer;\n'+
+            '    margin        : 0 5px;\n'+
+            '    padding       : 3px 7px;\n'+ 
+            '    border        : 2px solid skyblue;\n'+
+            '    border-radius : 15px;\n'+ 
+            '    background    : #fff;\n'+
+            '    font-size     : 15px;\n'+
+            '    font-weight   : bold;\n'+
+            '    color         : skyblue;\n'+
+            '    float         : right;\n'+
+            '}\n'+
+            '#'+this.domIDs.ct+' button:hover {\n'+
+            '    opacity       : 0.6;\n;'+
+            '}\n'+
+            '#'+this.domIDs.close+' {\n'+
+            '    position      : absolute;\n'+
+            '    margin        : 0!important;\n'+
+            '    top           : 5px;\n'+
+            '    right         : 5px;\n'+ 
+            '    padding       : 2px 5px!important;\n'+
+            '    font-size     : 11px!important;\n'+
+            '}\n'+
+            '#'+this.domIDs.ct+' h1 {\n'+
+            '    font-size     : 20px;\n'+
+            '    margin        : 5px 60px 10px 5px;\n'+
+            '    color         : skyblue;\n'+ 
+            '    border-radius : 5px;\n'+
+            '}\n'+
+            '#'+this.domIDs.ctSettings+' {\n'+
+            '    \n'+
+            '}\n'+
+            '#'+this.domIDs.ctSelectors+' {\n'+
+            '    \n'+
+            '}\n'+
+            '#'+this.domIDs.ctSelectors+' select {\n'+
+            '    text-align    : right;\n'+
+            '    font-size     : 16px;\n'+
+            '}\n'+
+            '#'+this.domIDs.ctPhases+' {\n'+
+            '    margin        : 10px 0;\n'+
+            '}\n'+
+            '#'+this.domIDs.ctPhases+' checkbox {\n'+
+            '    \n'+
+            '}\n'+
+            '#'+this.domIDs.ctControls+' {\n'+
+            '    \n'+
+            '}\n'+
+            '#'+this.domIDs.ctControls+' button {\n'+
+            '    \n'+
+            '}\n'+
+            '</style>\n\n'
+        );
+        /* Deshabilitamos los selectores al inicio de la aplicación para evitar un seleccionamiento inesperado. */
+        this.disableSelector(this.selectors.ns[0], true);
+
     },
     
     /* Hace una acción ejecutando un método del objeto pasado por argumento y 
@@ -150,7 +270,7 @@ imcDebugView.prototype =
     /* Llena las opciones de X selector con los datos argumentados en forma [{value:'',text:''},...] */
     fillSelector: function(selectorNS, data)
     {
-        var $selector  = this.selectors['$'+selectorNS];
+        var $selector  = jQuery('#'+this.domIDs[selectorNS]);
         var selectorES = jQuery.inArray( selectorNS, this.selectors.ns );
             selectorES = this.selectors.es[selectorES];
         var options    = '<option value="" selected="selected">Seleccione '+selectorES+'</option>';
@@ -168,7 +288,7 @@ imcDebugView.prototype =
     /* Limpia el selector argumentado y los que le siguen. */
     clearSelector: function(selectorNS) 
     {
-        var $selector = this.selectors['$'+selectorNS];
+        var $selector = jQuery('#'+this.domIDs[selectorNS]);
         
         $selector.html('');
         this.doNextSelector(selectorNS, 'clearSelector');
@@ -179,7 +299,7 @@ imcDebugView.prototype =
     /* Deshabilita/habilita el selector argumentado y los que le siguen. */
     disableSelector: function(selectorNS, disable) 
     {
-        var $selector = this.selectors['$'+selectorNS];
+        var $selector = jQuery('#'+this.domIDs[selectorNS]);
         
         $selector.attr('disabled', disable);
         this.doNextSelector(selectorNS, 'disableSelector', true);
@@ -198,8 +318,9 @@ imcDebugView.prototype =
         scriptjQuery.src = 'https://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js';
         document.body.appendChild(scriptjQuery);
         
-        new imcDebugController();
-        
+        scriptjQuery.onload = function() {
+            new imcDebugController();
+        }
     } else {
         jQuery(function(){
             new imcDebugController();

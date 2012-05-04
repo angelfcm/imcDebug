@@ -23,6 +23,7 @@ imcDebugModel.prototype =
             ns        : selectorsNS,
             queryFiles: {}
         };
+        this.machinesData = {};
         
         /* Se definen los archivos para las consultas de tipos, marcas y modelos de maquinas. */
         var ns         = this.selectors.ns;
@@ -60,7 +61,7 @@ imcDebugModel.prototype =
                 var value  = jQuery.trim( $row.find('td:first').text() );
                 var text   = value;
                 var number = jQuery.trim( $row.find('td:last').text() ); 
-                
+
                 if ( value ) {
                     fixedData.push({value: value, text: value, number: number}); 
                 }
@@ -69,12 +70,32 @@ imcDebugModel.prototype =
             /* Llamamos la funcion argumentada y pasamos el resultado obtenido. */
             onreadyFunction(fixedData);
         });
+    },
+
+    fillMachinesData: function(selectorsConfig, successFunction) {
+            /* Guarda en machinesData, la ruta que tendr谩n las m谩quinas de cada modelo en el siguiente orden 
+                { 
+                    tipo1: { 
+                        marca1: { 
+                            modelo1: [] 
+                        } 
+                    },
+                    tipo2: {...}, 
+                    ...
+                } 
+               Los datos que se descargan usando getSelectorData que los devuelve asi [{value:'', text:'', number: n}, ...] y se arreglan como arriba se muestra..
+            */
+            var This = this;
+            var trackingData 
+            jQuery.each(this.machinesData, function(){
+
+            });
     }
 
 };
 
 /* Clase constructora encarga de controlar el modelo y la vista, 
-   quien decidira que accion tomar afectando la base de datos y la vista de la aplicaci髇. */
+   quien decidira que accion tomar afectando la base de datos y la vista de la aplicaci贸n. */
 function imcDebugController() 
 {
     if ( !this.init ) {
@@ -89,55 +110,106 @@ imcDebugController.prototype =
     /* Inicializador */
     init: function()
     {
+
+        this.selectors = {
         /* Namespaces para los tipos, marcas y modelos */
-        this.selectorsNS = ['type', 'mark', 'model'];
+            ns   : ['type', 'mark', 'model'],
         /* Texto de salida para leer los nombres de selectores */
-        this.selectorsES = ['tipo', 'marca', 'modelo'];
+            es   : ['tipo', 'marca', 'modelo']
+        };
 
         this.debugConfig = {
             selectors : {'type': '', 'mark': '', 'model': ''},
-            phases    : {}
-        }
+            phases    : {phase1: false, phase2: false, phase3: false}
+        };
         /* Se crean los objetos para el modelo y la vista y se ejecuta la accion por default. */
-        this.model       = new imcDebugModel(this.selectorsNS);
-        this.view        = new imcDebugView(this, this.selectorsNS, this.selectorsES);
+        this.model       = new imcDebugModel(this.selectors.ns);
+        this.view        = new imcDebugView(this, this.selectors.ns, this.selectors.es);
         this.indexAction();
     },
     
-    /* Acci髇 por default */
+    /* Acci贸n por default */
     indexAction: function()
     {
-        /* Accionamos el selectAction por default al selector de tipos de m醧uinas. */ 
-        this.fillSelectorAction(this.selectorsNS[0]);
+        /* Accionamos el selectAction por default al selector de tipos de m谩quinas. */ 
+        this.fillSelectorAction(this.selectors.ns[0]);
     },
 
     selectSelectorAction: function(selectorNS, value)
     {
+        /* Guardamos la configuracion del selector seleccionado */
         this.debugConfig.selectors[selectorNS] = value;
         
-        var selectorIndex = jQuery.inArray(selectorNS, this.selectorsNS);
-        var nextSelector  = this.selectorsNS[selectorIndex+1];
+        /* guardamos los valores de los selectores en los datos finales para filtrar la depuracion de maquinas. */
+        this.setMachinesDataBeforeDebugging();
+
+        /* Si no hay valor seleccionado evitamos un error tratando de llenar el siguiente selector. */
+        if ( ! value ) {
+            return;
+        }
+
+        /* SI hay un selector despues del accionado entonces se llena el siguiente. */
+        var selectorIndex = jQuery.inArray(selectorNS, this.selectors.ns);
+        var nextSelector  = this.selectors.ns[selectorIndex+1];
         if ( nextSelector ) {
             this.fillSelectorAction(nextSelector);
         }
+
+    },
+
+    setMachinesDataBeforeDebugging: function() {
+        /* Guarda los datos de las maquinas que se buscaran, asi se busca donde se selecciona y no tener que buscar en todos los tipos, marcas y modelos 
+           a la hora de comenzar la depuracion.*/
+        var This          = this;
+        var trackingData  = this.model.machinesData = {};
+        var lastSelector  = this.selectors.ns.slice(-1);
+
+        jQuery.each(this.debugConfig.selectors, function(ns, selectorValue){
+            /* Si es el modelo entonces se le asigna como array de lo contrario como clase. */
+            var objectType = lastSelector == ns ? [] : {};
+
+            if ( ! selectorValue ) {;
+                return false;
+            }
+
+            trackingData[selectorValue] = objectType;
+            /* Se sube un nivel para seguir el rastreo hasta el ultimo selector seleccionado. */
+            trackingData = trackingData[selectorValue];
+        });
     },
 
     fillSelectorAction: function(selectorNS) {
         var This = this;
-        var urlGetData = 'tipo='+this.debugConfig.selectors[this.selectorsNS[0]]
-                         +'&marca='+this.debugConfig.selectors[this.selectorsNS[1]];
+        var urlGetData = 'tipo='+this.debugConfig.selectors[this.selectors.ns[0]]
+                         +'&marca='+this.debugConfig.selectors[this.selectors.ns[1]];
 
+        /* Mostramos el indicador de que algo anda en proceso. */
         this.view.showProcessIndicator(true);
         this.model.getSelectorData(selectorNS, urlGetData, function(resultData) {
-            /* Llenamos el selector */
+            /* Llenamos el selector con el mismo orden del resultData, es decir [{value: '', text: '', number: n }, {}, ...].  */
             This.view.fillSelector(selectorNS, resultData);
+            /* Quitamos el efecto de operaci贸n en proceso. */
             This.view.showProcessIndicator(false);
         });  
-    }
-    
+    },
+
+    checkedPhaseAction: function(phaseNS, checked) {
+        this.debugConfig.phases[phaseNS] = checked;
+    },
+
+    startDebuggingAction: function() {
+        /* Mostramos el indicador de proceso. */
+        this.view.showProcessIndicator(true);
+        /* Llenamos los datos faltantes para la depuracion, marcando el rastreo donde se encuentra cada maquina. */
+        this.model.fillTrackingData(This.debugConfig.selectors, function(){
+            /* Quitamos el indicador de proceso. */
+            this.view.showProcessIndicator(false);           
+        });
+    },
+
 };
     
-/* Clase constructora encarga de manipular y crear el DOM y salida de texto para la aplicaci髇. */
+/* Clase constructora encarga de manipular y crear el DOM y salida de texto para la aplicaci贸n. */
 function imcDebugView(Controller, selectorsNS, selectorsES) 
 {
     if ( !this.init ) {
@@ -159,7 +231,7 @@ imcDebugView.prototype =
         };
         this.processInterval = '';
 
-        /* Definiendo los identificadores para el DOM de la aplicaci髇.*/
+        /* Definiendo los identificadores para el DOM de la aplicaci贸n.*/
         this.domNSID = 'imcDebugView';
         this.domIDs  = {
             ct         : this.domNSID,
@@ -171,7 +243,7 @@ imcDebugView.prototype =
             phase2     : this.domNSID+'-phase2',
             phase3     : this.domNSID+'-phase3',
             close      : this.domNSID+'-close',
-            start      : this.donNSID+'-start',
+            start      : this.domNSID+'-start',
             pause      : this.domNSID+'-pause',
             process    : this.domNSID+'-process'
         };
@@ -191,11 +263,11 @@ imcDebugView.prototype =
             phasesCheckBoxesDomCode += separator+'<label for="'+phaseID+'">'+phaseText+'</label><input type="checkbox" id="'+phaseID+'" />\n';
         });
 
-        /* A馻dimos el c骴igo fuente DOM de la aplicaci髇 con sus identificadores. */
+        /* A帽adimos el c贸digo fuente DOM de la aplicaci贸n con sus identificadores. */
         jQuery('body').append(
             '\n\n<div id="'+this.domIDs.ct+'">\n'+
             '   <button id="'+this.domIDs.close+'">Cerrar</button><span id="'+this.domIDs.process+'"></span>\n'+
-            '   <h1>Depurador de m醧uinas</h1>\n'+
+            '   <h1>Depurador de m谩quinas</h1>\n'+
             '   <div id="'+this.domIDs.ctSettings+'">\n'+
             '       <div id="'+this.domIDs.ctSelectors+'">\n'+
             selectorsDomCode+
@@ -204,12 +276,12 @@ imcDebugView.prototype =
             phasesCheckBoxesDomCode+
             '       </div>\n'+
             '   </div>\n'+
-            '   <div id="'+this.domIDs.ctControls+'">'+
-            '       <button id="'+this.domIDs.pause+'">Pausar</button><button id="'+this.domIDs.start+'">Iniciar</button>'+
-            '   </div>'+
+            '   <div id="'+this.domIDs.ctControls+'">\n'+
+            '       <button id="'+this.domIDs.pause+'">Pausar</button><button id="'+this.domIDs.start+'">Iniciar</button>\n'+
+            '   </div>\n'+
             '</div>\n'
         );
-        /* Estilos para el DOM de la aplicaci髇. */
+        /* Estilos para el DOM de la aplicaci贸n. */
         jQuery('body').append(
             '<style type="text/css">\n'+
             '#'+this.domIDs.ct+' {\n'+
@@ -220,6 +292,7 @@ imcDebugView.prototype =
             '    border-radius : 5px;\n'+ 
             '    padding       : 5px;\n'+
             '    background    : #f7faff;\n'+
+            '    z-index       : 999999\n'+
             '}\n'+
             '#'+this.domIDs.ct+' *, -moz-focus-inner {\n'+
             '    font-family   : calibri;\n'+
@@ -254,6 +327,7 @@ imcDebugView.prototype =
             '    margin        : 5px 60px 10px 5px;\n'+
             '    color         : skyblue;\n'+ 
             '    border-radius : 5px;\n'+
+            '    cursor        : move\n'+
             '}\n'+
             '#'+this.domIDs.ctSettings+' {\n'+
             '    \n'+
@@ -272,7 +346,7 @@ imcDebugView.prototype =
             '    \n'+
             '}\n'+
             '#'+this.domIDs.ctControls+' {\n'+
-            '    \n'+
+            '    overflow: hidden;\n'+
             '}\n'+
             '#'+this.domIDs.ctControls+' button {\n'+
             '    \n'+
@@ -286,26 +360,38 @@ imcDebugView.prototype =
             '}\n'+
             '</style>\n\n'
         );
-        /* Deshabilitamos los selectores al inicio de la aplicaci髇 para evitar un seleccionamiento inesperado. */
+        /* Deshabilitamos los selectores al inicio de la aplicaci贸n para evitar un seleccionamiento inesperado. */
         this.disableSelector(this.selectors.ns[0], true);
 
         var This = this;
+        /* Evento onchange para los selectores */ 
         jQuery('#'+this.domIDs.ctSelectors).find('select').change(function(){
 
             var selectorNS = this.id.replace(/.*-/i, '');
             This.disableSelector(selectorNS, false)
                 .doNextSelector(selectorNS, 'clearSelector');
 
-            if ( !this.value ) {
-                return;
-            }
-
             This.Controller.selectSelectorAction(selectorNS, this.value);
+
+        });
+
+        /* Evento onchange para los checbox */
+        jQuery('#'+this.domIDs.ctPhases).find('input:checkbox').change(function(){
+
+            var phaseNS = this.id.replace(/.*-/, '');
+            This.Controller.checkedPhaseAction(phaseNS, this.checked);
+
+        });
+
+        /* Evento onclick para start */
+        jQuery('#'+this.domIDs.start).click(function(){
+
+            This.Controller.startDebuggingAction();
 
         });
     },
     
-    /* Hace una acci髇 ejecutando un m閠odo del objeto pasado por argumento y 
+    /* Hace una acci贸n ejecutando un m茅todo del objeto pasado por argumento y 
        pasandole el argumento argumentado.
        si es que aun hay otro selector inferior, ej. 'Tipo'->'Marca'->'Modelo' */
     doNextSelector: function(ns, methodName, arg) {
@@ -328,7 +414,7 @@ imcDebugView.prototype =
             .disableSelector(selectorNS, false);
         
         jQuery.each(data, function(i, data) {
-            options += '<option value="'+data.value+'">'+data.text+'</option>';
+            options += '<option value="'+data.value+'">'+data.text+' ('+data.number+')</option>';
         });       
         
         $selector.append(options);
@@ -383,21 +469,34 @@ imcDebugView.prototype =
     }
     
 };
+
 var imcDebug;
+var scriptjQuery = document.createElement('script');
+scriptjQuery.type= 'text/javascript';
+scriptjQuery.src = 'https://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js';
+var scriptjQueryUI = document.createElement('script');
+scriptjQueryUI.type= 'text/javascript';
+scriptjQueryUI.src = 'https://ajax.googleapis.com/ajax/libs/jqueryui/1.8.18/jquery-ui.min.js';
+
     /* Se inicializa el objeto de la aplicacion, se supone que el DOM ya esta
        listo al ejecutarlo en la pagina */ 
     if ( !window.jQuery ) {
-    
-        var scriptjQuery = document.createElement('script');
-        scriptjQuery.type= 'text/javascript';
-        scriptjQuery.src = 'https://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js';
         document.body.appendChild(scriptjQuery);
-        
+
         scriptjQuery.onload = function() {
-            imcDebug = new imcDebugController();
+            createObjectImcDebug();
         }
     } else {
-        jQuery(function(){
+        createObjectImcDebug();
+    }
+
+    function createObjectImcDebug() {
+        document.body.appendChild(scriptjQueryUI);
+        scriptjQueryUI.onload = function() {
             imcDebug = new imcDebugController();
-        });
+            $imcDebugView = jQuery('#'+imcDebug.view.domIDs.ct).draggable().draggable('option', 'handle', 'h1');
+            $imcDebugView.bind('dragstart', function(){
+                    jQuery(this).css('right', 'auto');
+            });
+        };    
     }

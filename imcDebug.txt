@@ -1,10 +1,11 @@
 /* Clase constructora encargada de hacer las consultas a los archivos, 
    obtiendo datos y modificandolos usando el DOM. */
-function imcDebugModel(selectorsNS) 
+function imcDebugModel(controller, selectorsNS) 
 {
     if ( !this.init ) {
         alert('Debe ser un objeto, se debe instanciar.');
     }
+    this.controller = controller;
     this.init(selectorsNS);
 }
 
@@ -20,18 +21,23 @@ imcDebugModel.prototype =
             /* alert('El host no coincide con '+this.host); */
         }
         this.selectors = {
-            ns        : selectorsNS,
-            queryFiles: {}
+            ns         : selectorsNS,
+            queryFiles : {},
+            queryParams: {}
         };
         this.machinesData = {};
         
         /* Se definen los archivos para las consultas de tipos, marcas y modelos de maquinas. */
-        var ns         = this.selectors.ns;
-        var queryFiles = this.selectors.queryFiles;
+        var ns          = this.selectors.ns;
+        var queryFiles  = this.selectors.queryFiles;
+        var queryParams = this.selectors.queryParams;
  
-        queryFiles[ns[0]] = 'tiposJX.php';
-        queryFiles[ns[1]] = 'marcasJX.php';
-        queryFiles[ns[2]] = 'modelosJX.php';
+        queryFiles [ns[0]] = 'tiposJX.php';
+        queryParams[ns[0]] = 'tipo';
+        queryFiles [ns[1]] = 'marcasJX.php';
+        queryParams[ns[1]] = 'marca';
+        queryFiles [ns[2]] = 'modelosJX.php';
+        queryParams[ns[2]] = 'modelo';
         
         /* Creamos el iframe para las consultas de los datos. */
         jQuery('body').append('<iframe name="imcDebugModel_queryFrame" style="display:none;"></iframe>');
@@ -40,8 +46,15 @@ imcDebugModel.prototype =
     },
 
     /* Devulve los datos para X selector (tipos, marcas y modelos) */
-    getSelectorData: function(selectorNS, urlGetData, onreadyFunction) 
+    getSelectorData: function(selectorNS, selectorsConfig, onreadyFunction) 
     {
+        var urlGetData = '';
+        var This       = this;
+
+        jQuery.each( selectorsConfig, function(ns, selectorValue){
+            var param   = This.selectors.queryParams[ns];
+            urlGetData += param+'='+selectorValue+'&';
+        });
         var queryFile = this.selectors.queryFiles[selectorNS];
         
         /* Abrimos el archivo con la consulta del selector y definimos la funcion al cargarse el contenido. */
@@ -56,14 +69,16 @@ imcDebugModel.prototype =
             var fixedData = [];
             
             /* Guardamos en fixedData el valor, texto y numero que existe de cada tipo, marca o modelo. */
+            var amount = jQuery.trim(jQuery('.listagen:eq(1)', This.queryFrame.document).find('td:last').text());
+            fixedData.push(amount);
             jQuery.each($dataRows, function(i, row){
                 var $row   = jQuery(row);
                 var value  = jQuery.trim( $row.find('td:first').text() );
                 var text   = value;
-                var number = jQuery.trim( $row.find('td:last').text() ); 
+                var amount = jQuery.trim( $row.find('td:last').text() ); 
 
                 if ( value ) {
-                    fixedData.push({value: value, text: value, number: number}); 
+                    fixedData.push({value: value, text: value, amount: amount}); 
                 }
             });
             
@@ -72,24 +87,69 @@ imcDebugModel.prototype =
         });
     },
 
-    fillMachinesData: function(selectorsConfig, successFunction) {
-            /* Guarda en machinesData, la ruta que tendrán las máquinas de cada modelo en el siguiente orden 
-                { 
-                    tipo1: { 
-                        marca1: { 
-                            modelo1: [] 
-                        } 
-                    },
-                    tipo2: {...}, 
-                    ...
-                } 
-               Los datos que se descargan usando getSelectorData que los devuelve asi [{value:'', text:'', number: n}, ...] y se arreglan como arriba se muestra..
-            */
-            var This = this;
-            var trackingData 
-            jQuery.each(this.machinesData, function(){
+    debugMachines: function(trackingConfig, successFunction) 
+    {
+        /* Guarda en machinesData, la ruta que tendrán las máquinas de cada modelo en el siguiente orden 
+            { 
+                tipo1: { 
+                    marca1: { 
+                        modelo1: [] 
+                    } 
+                },
+                tipo2: {...}, 
+                ...
+            } 
+           Los datos que se descargan usando getSelectorData que los devuelve asi [{value:'', text:'', amount: n}, ...] y se arreglan como arriba se muestra..
+        */
+        var This              = this;
+        var selectors         = this.selectors.ns;
+        var lastSelectorIndex = selectors.length-1;
+        var tracking          = this.machinesData;
 
-            });
+        /* Funcion encargada de marcar el rastreo donde se buscaran y depuraran las maquinas, dependiendo de que indice de tipo, marca y modelo tenga trackingConfig.indexValue.:seector:*/
+        function setTracking(iNS, prevValue, success)
+        {
+            if ( iNS > lastSelectorIndex ) {
+                success();
+                return;
+            }
+            var ns            = selectors[iNS];
+            var getDataConfig = trackingConfig.getDataConfig;
+
+            var keysValues = Object.keys(tracking);
+            var value      = keysValues[ trackingConfig.valueIndex[ns] + 1 ];
+
+            if ( !value ) {
+                switch(iNS) {
+                    case 1: console.log('Buscando marcas para '+prevValue);break;
+                    case 2: console.log('Buscando modelos para '+prevValue+' de '+getDataConfig.type);break;
+                 }
+                This.getSelectorData(ns, getDataConfig, function(data) {
+                    
+                    jQuery.each(This.fixData(data), function(k, v) {
+                        tracking[k] = v;
+                    });
+                    setTracking(iNS, getDataConfig, success);
+                });
+                return;
+            }
+
+            getDataConfig[ns] = value;
+            tracking          = tracking[value];
+            setTracking(++iNS, value, success);
+        }
+
+        setTracking(0, null, function(){
+            console.log('Rastreo marcado en \"'+trackingConfig.getDataConfig.type+'\">\"'+trackingConfig.getDataConfig.mark+'\">\"'+trackingConfig.getDataConfig.model+'\"');
+        });
+    },
+
+    fixData: function(notFixedData) {/*PROBLEMA CON AMOUNT*/
+        var fixedData = {amount: parseInt(notFixedData.splice(0,1)[0])};
+        jQuery.each(notFixedData, function(i, data){
+            fixedData[data.value] = {amount: data.amount};
+        });
+        return fixedData;
     }
 
 };
@@ -120,10 +180,12 @@ imcDebugController.prototype =
 
         this.debugConfig = {
             selectors : {'type': '', 'mark': '', 'model': ''},
+            /* Para guardar la cantidad de maquinas de cada seleccion y no perderlas */
+            selectorsAmount: {'type': null, 'mark': null, 'model': null},
             phases    : {phase1: false, phase2: false, phase3: false}
         };
         /* Se crean los objetos para el modelo y la vista y se ejecuta la accion por default. */
-        this.model       = new imcDebugModel(this.selectors.ns);
+        this.model       = new imcDebugModel(this, this.selectors.ns);
         this.view        = new imcDebugView(this, this.selectors.ns, this.selectors.es);
         this.indexAction();
     },
@@ -135,10 +197,11 @@ imcDebugController.prototype =
         this.fillSelectorAction(this.selectors.ns[0]);
     },
 
-    selectSelectorAction: function(selectorNS, value)
+    selectSelectorAction: function(selectorNS, value, amount)
     {
         /* Guardamos la configuracion del selector seleccionado */
-        this.debugConfig.selectors[selectorNS] = value;
+        this.debugConfig.selectors[selectorNS]       = value;
+        this.debugConfig.selectorsAmount[selectorNS] = amount;
         
         /* guardamos los valores de los selectores en los datos finales para filtrar la depuracion de maquinas. */
         this.setMachinesDataBeforeDebugging();
@@ -165,28 +228,30 @@ imcDebugController.prototype =
         var lastSelector  = this.selectors.ns.slice(-1);
 
         jQuery.each(this.debugConfig.selectors, function(ns, selectorValue){
-            /* Si es el modelo entonces se le asigna como array de lo contrario como clase. */
-            var objectType = lastSelector == ns ? [] : {};
+            /* Objeto donde ira el contenido del selector seleccionado. */
+            var contentObject = {};
 
-            if ( ! selectorValue ) {;
+            if ( ! selectorValue ) {
                 return false;
             }
 
-            trackingData[selectorValue] = objectType;
+            /* Definimos la propiedad de longitud de maquinas para X selector */
+            contentObject.amount = This.debugConfig.selectorsAmount[ns];
+            /* Definimos el objeto del selector, si es el ultimo, es el de los modelos por lo que usaremos una matriz de datos []*/
+            trackingData[selectorValue] = contentObject;
             /* Se sube un nivel para seguir el rastreo hasta el ultimo selector seleccionado. */
             trackingData = trackingData[selectorValue];
         });
     },
 
     fillSelectorAction: function(selectorNS) {
-        var This = this;
-        var urlGetData = 'tipo='+this.debugConfig.selectors[this.selectors.ns[0]]
-                         +'&marca='+this.debugConfig.selectors[this.selectors.ns[1]];
+        var This             = this;
+        var currentSelection = this.debugConfig.selectors;
 
         /* Mostramos el indicador de que algo anda en proceso. */
         this.view.showProcessIndicator(true);
-        this.model.getSelectorData(selectorNS, urlGetData, function(resultData) {
-            /* Llenamos el selector con el mismo orden del resultData, es decir [{value: '', text: '', number: n }, {}, ...].  */
+        this.model.getSelectorData(selectorNS, currentSelection, function(resultData) {
+            /* Llenamos el selector con el mismo orden del resultData, es decir [{value: '', text: '', amount: n }, {}, ...].  */
             This.view.fillSelector(selectorNS, resultData);
             /* Quitamos el efecto de operación en proceso. */
             This.view.showProcessIndicator(false);
@@ -198,13 +263,34 @@ imcDebugController.prototype =
     },
 
     startDebuggingAction: function() {
+        console.log('Preparando depuracion');
+        var This = this;
+        var trackingConfig = {
+            valueIndex: {},
+            getDataConfig: {}
+        };
+        jQuery.each(this.debugConfig.selectors, function(ns, selectorValue) {
+            trackingConfig.valueIndex[ns]    = 0;
+            trackingConfig.getDataConfig[ns] = selectorValue;
+        });
+
         /* Mostramos el indicador de proceso. */
         this.view.showProcessIndicator(true);
-        /* Llenamos los datos faltantes para la depuracion, marcando el rastreo donde se encuentra cada maquina. */
-        this.model.fillTrackingData(This.debugConfig.selectors, function(){
-            /* Quitamos el indicador de proceso. */
-            this.view.showProcessIndicator(false);           
-        });
+        if ( jQuery.isEmptyObject(this.model.machinesData) ) {
+            console.log('Buscando tipos');
+            this.model.getSelectorData(this.selectors.ns[0], '', function(notFixedData){
+                This.model.machinesData = This.model.fixData(notFixedData);
+                This.model.debugMachines(trackingConfig, function(){
+                    /* Quitamos el indicador de proceso. */
+                    This.view.showProcessIndicator(false);           
+                });
+            });
+        } else {
+            this.model.debugMachines(trackingConfig, function(){
+                /* Quitamos el indicador de proceso. */
+                This.view.showProcessIndicator(false);           
+            });
+        }
     },
 
 };
@@ -263,6 +349,9 @@ imcDebugView.prototype =
             phasesCheckBoxesDomCode += separator+'<label for="'+phaseID+'">'+phaseText+'</label><input type="checkbox" id="'+phaseID+'" />\n';
         });
 
+        /* Borramos la interfaz en caso de existir al duplicar el codigo manualmente */
+        jQuery('#'+this.domIDs.ct).remove();
+
         /* Añadimos el código fuente DOM de la aplicación con sus identificadores. */
         jQuery('body').append(
             '\n\n<div id="'+this.domIDs.ct+'">\n'+
@@ -281,9 +370,12 @@ imcDebugView.prototype =
             '   </div>\n'+
             '</div>\n'
         );
+
+        /* Borramos los estilos en caso de haber duplicidad. */
+        jQuery('#imcDebug-styles').remove();
         /* Estilos para el DOM de la aplicación. */
         jQuery('body').append(
-            '<style type="text/css">\n'+
+            '<style type="text/css" id="imcDebug-styles">\n'+
             '#'+this.domIDs.ct+' {\n'+
             '    position      : fixed;\n'+
             '    top           : 10px;\n'+
@@ -371,7 +463,8 @@ imcDebugView.prototype =
             This.disableSelector(selectorNS, false)
                 .doNextSelector(selectorNS, 'clearSelector');
 
-            This.Controller.selectSelectorAction(selectorNS, this.value);
+            var amount = jQuery(this).find('option:selected').text().match(/\(\d*\)/)[0].replace(/\(|\)/g,'');
+            This.Controller.selectSelectorAction(selectorNS, this.value, amount);
 
         });
 
@@ -408,13 +501,13 @@ imcDebugView.prototype =
         var $selector  = jQuery('#'+this.domIDs[selectorNS]);
         var selectorES = jQuery.inArray( selectorNS, this.selectors.ns );
             selectorES = this.selectors.es[selectorES];
-        var options    = '<option value="" selected="selected">Seleccione '+selectorES+'</option>';
+        var options    = '<option value="" selected="selected">Seleccione '+selectorES+' ('+data.splice(0,1)+')</option>';
 
         this.clearSelector(selectorNS)
             .disableSelector(selectorNS, false);
         
         jQuery.each(data, function(i, data) {
-            options += '<option value="'+data.value+'">'+data.text+' ('+data.number+')</option>';
+            options += '<option value="'+data.value+'">'+data.text+' ('+data.amount+')</option>';
         });       
         
         $selector.append(options);
@@ -452,6 +545,7 @@ imcDebugView.prototype =
             var i    = 0;
             $process.css('display', 'inline');
 
+            clearInterval(this.processInterval);
             this.processInterval = setInterval(function(){
                 if( i+1 > text.length ) {
                     $process.text('');

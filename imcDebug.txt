@@ -63,6 +63,7 @@ imcDebugModel.prototype =
             'marketbook',
             'truckpaper',
             'auctiontime',
+            'tractorhouse',
             /*'gmtrucksinc',*/
             document.domain
         ];
@@ -303,10 +304,10 @@ imcDebugModel.prototype =
                 if ( !tracking.pages ) {
                     tracking.pages = [];
                 }
-                tracking.pages.push(pageMachines);
+                tracking.pages[trackingConfig.index.page]=pageMachines;
 
                 /* Ahora si comenzamos a depurar por paginas. */
-                This.debugPageMachines(tracking, trackingConfig, function(connectionError){
+                This.debugPageMachines(tracking, trackingConfig, function(){
                     if (This.logCaller)console.log('CALLER::debuggingProcess()>setTracking()>success>getPageMachines()>success>debugPageMachines()>success');
                     /*Movemos a la siguiente pagina y si no hay entonces al siguiente modelo y si no al siguiente marca y si no al tipo y si no terminamos. */
                     /* Siempre se le sumara 1 al indice de los selectores ya que en primer lugar siempre esta la propiedad "amount" por lo que se salta */
@@ -316,7 +317,7 @@ imcDebugModel.prototype =
                     var cond2 = trackingConfig.index.model+1 < selectorKeys.model.length-1;
                     var cond3 = trackingConfig.index.mark+1 < selectorKeys.mark.length-1;
                     var cond4 = trackingConfig.index.type+1 < selectorKeys.type.length-1;
-                    if( !connectionError && ( cond1 || cond2 || cond3 || cond4 ) ) {
+                    if( cond1 || cond2 || cond3 || cond4 ) {
                         trackingConfig.index.machine = 0;
                         /* Movemos a la siguiente pagina */
                         if ( cond1 ) {
@@ -371,13 +372,12 @@ imcDebugModel.prototype =
         var stopPrev = false;
 
         var debugMachine = function(isReconnection, reconnectID) {
-            this.view.message3('DEPURANDO');
+            This.view.message3('DEPURANDO');
 
             if (This.logCaller)console.log('CALLER::debugPageMachines()>debugMachine()');
             var machine = page[ trackingConfig.index.machine ];
 
             if (This.logRequest)console.log('REQUEST::ID='+machine.id+', Request='+machine.link+', Response=[WAITING]');
-            /*console.log('-------------------------------\n'+This.pathMessage()+'\nID='+machine.id+'\n\nlink original     = '+machine.link);*/
 
             This.view.message1(This.pathMessage());
             var checkPhases   = This.controller.debugConfig.checkPhases, hasPhase = false;
@@ -385,16 +385,17 @@ imcDebugModel.prototype =
             for( var i = 1; i <= 3; i++ ) {
                 if ( !checkPhases['phase'+i] && machine.phases['phase'+i] ) {
                     hasPhase = true;
+                    break;
                 }
             }
-            if ( checkPhases.buyProjects && machine.phases.buyProjects ) {
+            if ( !checkPhases.buyProjects && machine.phases.buyProjects ) {
                 hasPhase = true;
             }
 
             /* Debe respetar el dominio configurado para la depuracion */
             var isCorrectDomain = false;
             jQuery.each(This.debugDomains, function(i, d){
-                if ( windowObject.document.domain.indexOf(d) != -1 ) {
+                if ( machine.link.indexOf(d) != -1 ) {
                     isCorrectDomain = true;
                     return false;
                 }
@@ -426,7 +427,7 @@ imcDebugModel.prototype =
                 return;
             }
             /* Funcion reemplazante del evento onload para la carga de un crossdomain ya que un onload comun no funcionaria */
-            var onLoadCrossDomain = function(windowObject, success, querySpeed, timeout){
+            var onLoadCrossDomain = function(windowObject, success, querySpeed){
                 
                 if (This.logCaller)console.log('CALLER::debugPageMachines()>debugMachine()>onLoadCrossDomain()');
                 var previousLocation = windowObject.location.href;
@@ -466,8 +467,8 @@ imcDebugModel.prototype =
                             var jsResizeWindow = 'javascript:netscape.security.PrivilegeManager.enablePrivilege(\'UniversalXPConnect\');var qWinDeb = imcDebug.model.queryWindow; qWinDeb.resizeTo(400, 400); qWinDeb.moveTo((screen.availWidth/2)-200, (screen.availHeight/4)-200); qWinDeb.focus();';
                             This.view.message3('<span class="error">Se solicita captcha, confirmalo. <a href="'+jsResizeWindow+'">Ampliar ventana</a></span>');
                         }
-                        setTimeout(check, querySpeed);
                         isCaptchaStop = true;
+                        setTimeout(check, querySpeed);
                         return;
                     }
                     /* Si el contenido esta completo y la direccion anterior es diferente a la nueva y el contenido es el correcto, entonces se ha cargado la pagina */
@@ -546,17 +547,18 @@ imcDebugModel.prototype =
                     next();
                 }
                 return;
-            }, 10, 15000);
+            }, 10);
         };
         function next() {
-            if (This.logCaller)console.log('CALLER::debugPageMachines()>debugMachine()>onLoadCrossDomain()>success>next()');
             This.checkedMachinesAmount++;
             This.view.message2('<b>'+(This.markedMachines.length)+' Etiquetadas </b> - <b>'+This.checkedMachinesAmount+' Analizadas</b>');
+
+            if (This.logCaller)console.log('CALLER::debugPageMachines()>debugMachine()>onLoadCrossDomain()>success>next()');
             netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
             var pageMachinesLength = page.length;
             if ( trackingConfig.index.machine < pageMachinesLength-1 ) {
                 trackingConfig.index.machine++;
-                /* Debe de haber un tiempo entre consulta minimo de 2000ms ya que rechazan solicitudes continuas */
+                 /* Debe de haber un tiempo entre consulta minimo de 2000ms ya que rechazan solicitudes continuas */
                 try{This.queryWindow.close();}catch(err){}
                 setTimeout(debugMachine, 100);
             } else {
@@ -594,7 +596,7 @@ imcDebugModel.prototype =
             this.controller.paused = true;
             this.view.showProcessIndicator(false);
             this.view.showButtons('resume', 'finish');
-            this.view.disableCheckboxes(true);
+            this.view.disableCheckboxes(false);
             if(this.queryWindow && !dontCloseWindow) {
                 this.queryWindow.close();
             }

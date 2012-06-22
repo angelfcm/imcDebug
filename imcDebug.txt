@@ -1,3 +1,4 @@
+javascript:
 /* Clase constructora encargada de hacer las consultas a los archivos, 
    obtiendo datos y modificandolos usando el DOM. */
 function imcDebugModel(controller, selectorsNS) 
@@ -7,6 +8,9 @@ function imcDebugModel(controller, selectorsNS)
     }
     this.controller = controller;
     this.view       = controller.view;
+    this.logCaller  = controller.logCaller;
+    this.logRequest = controller.logRequest;
+    this.startedTime = new Date;
     this.init(selectorsNS);
 }
 
@@ -16,19 +20,19 @@ imcDebugModel.prototype =
     /* Metodo inicializador */
     init: function(selectorsNS) 
     {
-
-        this.host = 'imcmexico.com';
+        this.host = document.domain;
         /* Aqui se pondras los datos de las maquinas etiquedas por el programa */
         this.markedMachines = [];
-        if( this.host != document.domain ) {
-            alert('El host no coincide con '+this.host);
-        }
         this.selectors = {
             ns         : selectorsNS,
             queryFiles : {},
             queryParams: {}
         };
         this.machinesData = {};
+        this.checkedMachinesAmount = 0;
+        /*this.reconnections_getSelectorData = 0;
+        this.maxReconnections_getSelectorData = 5;
+        this.lastSelectorSelected = '';*/
         
         /* Se definen los archivos para las consultas de tipos, marcas y modelos de maquinas. */
         var ns          = this.selectors.ns;
@@ -52,29 +56,60 @@ imcDebugModel.prototype =
         jQuery('body').append('<iframe name="'+nameFrameid+'" style="display:none;"></iframe>');
         this.queryFrame = window[nameFrameid];
         this.$queryFrame= jQuery('iframe[name='+nameFrameid+']');
+
+        /* Dominios aceptados para depurar, solo el nombre inicial ya que probablemente tengan diferentes extensiones (.com, .mx, .es, .ca, etc) */
+        this.debugDomains = [
+            'machinerytrader',
+            'marketbook',
+            'truckpaper',
+            'auctiontime',
+            /*'gmtrucksinc',*/
+            document.domain
+        ];
     },
 
     /* Devulve los datos para X selector (tipos, marcas y modelos) */
-    getSelectorData: function(selectorNS, selectorsConfig, success) 
+    getSelectorData: function(selectorNS, selectorsConfig, success, isReconnection, reconnectID) 
     {
+        if (this.logCaller)console.log('CALLER::getSelectorData()');
+
         var urlGetData = '';
         var This       = this;
         var nsIndex    = jQuery.inArray(selectorNS, this.selectors.ns);
         var lastNsIndex= this.selectors.ns.length-1;
+        var timeout    = 15000;
+        var elapsedTime= 0;
 
         jQuery.each( selectorsConfig, function(ns, selectorValue){
             var param   = This.selectors.queryParams[ns];
             urlGetData += param+'='+selectorValue+'&';
         });
         var queryFile = this.selectors.queryFiles[selectorNS];
-        
+
+        /* Con esto hacemos reconexiones en caso de no cargar la solicitud, devuelve el ID del intervalo para detenerlo en caso de cargar la solicitud. Ver el metodo reconnect para ver las condiciones */
+        reconnectID = reconnectID || this.reconnect(function(){
+            netscape.security.PrivilegeManager.enablePrivilege("UniversalXPConnect");
+            This.queryFrame.stop();
+        }, function(isReconnection, updatedReconnectID){
+            reconnectID = updatedReconnectID;
+            This.view.message3("Preparando");
+            This.getSelectorData(selectorNS, selectorsConfig, success, isReconnection, reconnectID);
+        }, isReconnection, {timeout: 15000, maxReconnections: 3, reconnectTime: 3000});
+
         /* Abrimos el archivo con la consulta del selector y definimos la funcion al cargarse el contenido. */
         this.$queryFrame.attr('src', queryFile+'?'+urlGetData);
-        var This = this;
-        
+
+        if ( this.checkPause('Pausado por el usuario.') ) {
+            clearTimeout(reconnectID);
+            return;
+        }
+        var This = this;       
         this.$queryFrame.unbind('load');
         this.$queryFrame.load( function() {
-        
+            /* Detenemos las reconexiones */
+            clearTimeout(reconnectID);
+            This.view.message3("Preparando");
+
             /* Filas contenedoras de los datos para tipos, marcas y modelos. */
             var $dataRows = jQuery('.listaDatos1', This.queryFrame.document).parent();
             var fixedData = [];
@@ -105,26 +140,37 @@ imcDebugModel.prototype =
         });
     },
 
-    getPageMachines: function(trackingConfig, modeloid, success)
+    getPageMachines: function(trackingConfig, modeloid, success, isReconnection, reconnectID)
     {
+        if (this.logCaller)console.log('CALLER::getPageMachines()');
         var urlGetData = '';
         var This = this;
-
         jQuery.each(trackingConfig.getDataConfig, function(ns, selectorValue){
             var param = This.machinesSettings.selectorsParams[ns];
             urlGetData += param+'='+selectorValue+'&';
         });
-
         urlGetData += 'modeloid='+modeloid+'&actual='+(trackingConfig.index.page+1);
-
         var queryFile = this.machinesSettings.file;
+        /* Con esto hacemos reconexiones en caso de no cargar la solicitud, devuelve el ID del intervalo para detenerlo en caso de cargar la solicitud. Ver el metodo reconnect para ver las condiciones */
+
+        reconnectID = reconnectID || this.reconnect(function(){
+            netscape.security.PrivilegeManager.enablePrivilege("UniversalXPConnect");
+            This.queryFrame.stop();
+        }, function(isReconnection, updatedReconnectID){
+            reconnectID = updatedReconnectID;
+            This.getPageMachines(trackingConfig, modeloid, success, isReconnection, reconnectID);
+            This.view.message3("DEPURANDO");
+        }, isReconnection, {timeout: 15000, maxReconnections: 3, reconnectTime: 3000});
 
         /* Abrimos el archivo con la consulta del selector y definimos la funcion al cargarse el contenido. */
         this.$queryFrame.attr('src', queryFile+'?'+urlGetData);
-        
         this.$queryFrame.unbind('load');
+
         this.$queryFrame.load( function() {
-        
+
+            /* Detenemos las reconexiones */
+            clearTimeout(reconnectID);
+            This.view.message3("DEPURANDO");
             /* Filas contenedoras de los datos para tipos, marcas y modelos. */
             var $dataRows1 = jQuery('tr[id^="fila"]:even', This.queryFrame.document);
             var $dataRows2 = jQuery('tr[id^="fila"]:odd', This.queryFrame.document);
@@ -158,13 +204,37 @@ imcDebugModel.prototype =
 
                 fixedData.push({ id: id, link: link, phases: phases, alreadyMarked: alreadyMarked });
             });
-            
+            if( This.checkPause('Pausado por el usuario') ){ return; }
             /* Llamamos la funcion argumentada y pasamos el resultado obtenido. */
             success(fixedData);
         });
     },
 
-    debuggingProcess: function(trackingConfig, success) 
+    reconnect: function(onBeforeReconnect, onReconnect, isReconnection, config) 
+    {
+        if ( isReconnection ) {
+            return;
+        } 
+        var reconnections    = 0;
+        var This = this;
+        var fn = function(){
+            if ( typeof onBeforeReconnect == 'function' ) {
+                onBeforeReconnect();
+            }
+            if ( ++reconnections <= config.maxReconnections ) {
+                This.view.message3('<span class="error">Tiempo de espera excedido, reintento '+reconnections+' de '+config.maxReconnections+'...</span>');
+                setTimeout(function(){
+                    onReconnect(true, setTimeout(fn, config.timeout)); 
+                }, config.reconnectTime);
+            } else {
+                This.controller.pause = true;
+                This.checkPause('<span class="error">Error de conexión.</span>');
+            }
+        };
+        return setTimeout(fn, config.timeout);
+    },
+
+    debuggingProcess: function(trackingConfig) 
     {
         /* Guarda en machinesData, la ruta que tendrán las máquinas de cada modelo en el siguiente orden 
             { 
@@ -187,32 +257,31 @@ imcDebugModel.prototype =
         var tracking          = this.machinesData;
         var selectorKeys      = {};
 
+        this.view.message3('DEPURANDO');
+        if (this.logCaller)console.log('CALLER::debuggingProcess()');
         /* En caso de pedir pausa se detiene el proceso, pero no se termina. */
         if(this.checkPause('Pausado por el usuario')) return;
-
         /* Funcion encargada de marcar el rastreo donde se buscaran y depuraran las maquinas, dependiendo de que indice de tipo, marca y modelo tenga trackingConfig.indexValue.:seector:*/
         var setTracking = function(iNS, prevValue, success) {
+
+            if (This.logCaller)console.log('CALLER::debuggingProcess()>setTracking()');
             /* En caso de pedir pausa se detiene el proceso, pero no se termina. */
             if(This.checkPause('Pausado por el usuario')) return;
-
             if ( iNS > lastSelectorIndex ) {
                 success();
                 return;
             }
             var ns            = selectors[iNS];
             var getDataConfig = trackingConfig.getDataConfig;
-
             var keysValues = Object.keys(tracking);
             selectorKeys[ns] = keysValues;
             var value      = keysValues[ trackingConfig.index[ns] + 1 ];
 
             if ( !value ) {
-                
-                console.log(This.pathMessage());
+                if (This.logRequest)console.log('REQUEST::'+This.pathMessage().replace(/(<b>)|(<\/b>)/g,''));
                 This.view.message1(This.pathMessage());
-
                 This.getSelectorData(ns, getDataConfig, function(data) {
-                    
+                if (This.logCaller)console.log('CALLER::debuggingProcess()>setTracking()>getSelectorData()>success');
                     jQuery.each(This.fixData(data), function(k, v) {
                         tracking[k] = v;
                     });
@@ -220,7 +289,6 @@ imcDebugModel.prototype =
                 });
                 return;
             }
-
             getDataConfig[ns] = value;
             tracking          = tracking[value];
             setTracking(++iNS, value, success);
@@ -228,10 +296,10 @@ imcDebugModel.prototype =
 
         /* Marcamos el puntero/rastreo donde se buscaran las maquinas */
         setTracking(0, null, function(){
-
+            if (This.logCaller)console.log('CALLER::debuggingProcess()>setTracking()>success');
             /* Buscamos las maquinas para X pagina del rastreo */
             This.getPageMachines(trackingConfig, tracking.modeloid, function(pageMachines){
-
+            if (This.logCaller)console.log('CALLER::debuggingProcess()>setTracking()>success>getPageMachines()>success');
                 if ( !tracking.pages ) {
                     tracking.pages = [];
                 }
@@ -239,6 +307,7 @@ imcDebugModel.prototype =
 
                 /* Ahora si comenzamos a depurar por paginas. */
                 This.debugPageMachines(tracking, trackingConfig, function(connectionError){
+                    if (This.logCaller)console.log('CALLER::debuggingProcess()>setTracking()>success>getPageMachines()>success>debugPageMachines()>success');
                     /*Movemos a la siguiente pagina y si no hay entonces al siguiente modelo y si no al siguiente marca y si no al tipo y si no terminamos. */
                     /* Siempre se le sumara 1 al indice de los selectores ya que en primer lugar siempre esta la propiedad "amount" por lo que se salta */
                     /* Se define la cantidad de paginas que hay en el modelo dependiendo el numero de maquinas, son 20 maquinas por pagina, se suma 1 si hay sobrante. */
@@ -271,16 +340,14 @@ imcDebugModel.prototype =
                             trackingConfig.index.model = 0;
                             trackingConfig.index.mark = 0;
                         }
-
                         if ( This.checkPause('Pausado por el usuario') ) return;
-
                         /* Se depura en la siguiente pagina del siguiente modelo, marca y tipo si es que se terminaron sus maquinas respectivas. */
-                        This.debuggingProcess(trackingConfig, success);
+                        This.debuggingProcess(trackingConfig);
                     } else {
                         if( This.queryWindow ) {
                             This.queryWindow.close();
                         }
-                        success();
+                        This.controller.finishAction();
                     }
                 });
             });
@@ -289,22 +356,32 @@ imcDebugModel.prototype =
 
     debugPageMachines: function(tracking, trackingConfig, success)
     {
+        if (this.logCaller)console.log('CALLER::debugPageMachines()');
+
         var getDataConfig = trackingConfig.getDataConfig;
         var numberPage = trackingConfig.index.page+1;
-        
-        console.log('Depurando máquinas en '+this.pathMessage());
+
+        if (this.logRequest)console.log('REQUEST::'+this.pathMessage(true).replace(/(<b>)|(<\/b>)/g,''));
+
         this.view.message1(this.pathMessage());
         
         var This = this;
         var page = tracking.pages[ trackingConfig.index.page ];
+        /* Variable para detener las funciones que traten de ejecutarse en una reconeccion anterior */
+        var stopPrev = false;
 
-        var debugMachine = function() {
+        var debugMachine = function(isReconnection, reconnectID) {
+            this.view.message3('DEPURANDO');
+
+            if (This.logCaller)console.log('CALLER::debugPageMachines()>debugMachine()');
             var machine = page[ trackingConfig.index.machine ];
 
-            console.log('-------------------------------\n'+This.pathMessage()+'\nID='+machine.id+'\n\nlink original     = '+machine.link);
-            This.view.message1(This.pathMessage());
+            if (This.logRequest)console.log('REQUEST::ID='+machine.id+', Request='+machine.link+', Response=[WAITING]');
+            /*console.log('-------------------------------\n'+This.pathMessage()+'\nID='+machine.id+'\n\nlink original     = '+machine.link);*/
 
+            This.view.message1(This.pathMessage());
             var checkPhases   = This.controller.debugConfig.checkPhases, hasPhase = false;
+
             for( var i = 1; i <= 3; i++ ) {
                 if ( !checkPhases['phase'+i] && machine.phases['phase'+i] ) {
                     hasPhase = true;
@@ -313,133 +390,179 @@ imcDebugModel.prototype =
             if ( checkPhases.buyProjects && machine.phases.buyProjects ) {
                 hasPhase = true;
             }
+
+            /* Debe respetar el dominio configurado para la depuracion */
+            var isCorrectDomain = false;
+            jQuery.each(This.debugDomains, function(i, d){
+                if ( windowObject.document.domain.indexOf(d) != -1 ) {
+                    isCorrectDomain = true;
+                    return false;
+                }
+            });
             /* Saltamos a la siguiente maquina si esta ya esta marcada o excepcion de fase y evitar solicitudes en vano */
-            if ( machine.alreadyMarked || hasPhase ) {
+            if ( machine.alreadyMarked || hasPhase || !isCorrectDomain ) {
+                var ignoredResponse = '[IGNORED]';
                 if ( machine.alreadyMarked ) {
-                    console.log('Excepcion de marcada. \n-------------------------------');
+                    ignoredResponse += '[ALREADY MARKED]';
+                    /*console.log('Excepcion de marcada.\n');*/
                 }
                 if ( hasPhase ) {
-                    console.log('Excepcion de fase. \n-------------------------------');
+                    ignoredResponse += '[HAS PHASE]';
+                    /*console.log('Excepcion de fase.\n');*/
                 }
+                if ( !isCorrectDomain ) {
+                    ignoredResponse += '[UNKNOWN DOMAIN]';
+                }
+                if (This.logRequest)console.log('REQUEST::ID='+machine.id+', Request='+machine.link+', Response='+ignoredResponse);
+                /*console.log('\n-------------------------------');*/
                 next();
                 return;
             }
-
             /* Pedimos permiso para acceder a otro dominio. */
             try {
                 netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
             } catch(err) {
-                This.view.message2('Acepta el privilegio para continuar el proceso.\nO hubo un error, activa \'signed.applets.codebase_principal_support\' en \'about:config\'');
+                This.view.message3('Acepta el privilegio para continuar el proceso.\nO hubo un error, activa \'signed.applets.codebase_principal_support\' en \'about:config\'');
                 return;
             }
             /* Funcion reemplazante del evento onload para la carga de un crossdomain ya que un onload comun no funcionaria */
             var onLoadCrossDomain = function(windowObject, success, querySpeed, timeout){
+                
+                if (This.logCaller)console.log('CALLER::debugPageMachines()>debugMachine()>onLoadCrossDomain()');
                 var previousLocation = windowObject.location.href;
-                var elapsedTime = 0;
+                var ONE = false;
+                var isCaptchaStop = false;
 
                 (function check() {
-
-                    if ( This.checkPause('Pausado por el usuario') ) return;
+                    if ( stopPrev ) {
+                        return;
+                    }
+                    if ( !ONE ) { 
+                        ONE=true;
+                        if (This.logCaller)console.log('CALLER::debugPageMachines()>debugMachine()>onLoadCrossDomain()>check()');
+                    }
+                    if ( This.checkPause('Pausado por el usuario') ) {
+                        clearTimeout(reconnectID);
+                        return;
+                    }
                     if ( windowObject.closed ) {
+                        clearTimeout(reconnectID);
                         This.controller.pause = true;
                         This.checkPause('<span class="error">La ventana del proceso fue cerrada por el usuario, se ha pausado.</span>');
                         return;
                     }
-
                     netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
                     /* Cuando el contenido esta completo en machinery y tractorhouse, en veces se carga un contenido inesperado que redirecciona al contenido correcto, por lo que se espera hasta que sea el correcto que contiene un formulario con el id mencionado abajo. 
                         Pero si la pagina se redirecciona a la pagina de inicio es valido, en machinery, tractorhouse y marketbook, terminan con default.aspx
                     */
                     try {
-                        var isCorrectContent = jQuery('#aspnetForm', windowObject.document).length || /(default\.aspx)|(notfound\.aspx)/i.test(windowObject.location.href);
-                        var needCaptcha = windowObject.location.href.indexOf('blockedUser') != -1 ? true : false;
+                        var isCorrectContent = jQuery('#aspnetForm', windowObject.document).length || /(default\.aspx)|(notfound\.aspx)/i.test(windowObject.location.href) || windowObject.document.domain == This.host /*|| windowObject.document.domain == 'gmtrucksinc.com'*/;
+                        var needCaptcha = windowObject.location.href.indexOf('blockedUser') != -1;
                     }catch(err){}
 
                     if ( needCaptcha ) {
-                        var jsResizeWindow = 'javascript:var qWinDeb = imcDebug.model.queryWindow; qWinDeb.resizeTo(400, 400); qWinDeb.moveTo(screen.availWidth/2, screen.availHeight/4);';
-                        This.controller.pause = true;
-                        This.checkPause('<span class="error">El servidor solicita captcha, entra a la ventana y confirmalo.</span> <br /><a href="'+jsResizeWindow+'">Click para ampliar.</a>');
+                        clearTimeout(reconnectID);
+                        if ( !isCaptchaStop ) {
+                            var jsResizeWindow = 'javascript:netscape.security.PrivilegeManager.enablePrivilege(\'UniversalXPConnect\');var qWinDeb = imcDebug.model.queryWindow; qWinDeb.resizeTo(400, 400); qWinDeb.moveTo((screen.availWidth/2)-200, (screen.availHeight/4)-200); qWinDeb.focus();';
+                            This.view.message3('<span class="error">Se solicita captcha, confirmalo. <a href="'+jsResizeWindow+'">Ampliar ventana</a></span>');
+                        }
+                        setTimeout(check, querySpeed);
+                        isCaptchaStop = true;
                         return;
                     }
-                    /* Si el contenido esta completo y la direccion anterior es diferente a la nueva, entonces se ha cargado la pagina */
+                    /* Si el contenido esta completo y la direccion anterior es diferente a la nueva y el contenido es el correcto, entonces se ha cargado la pagina */
                     if ( windowObject.document.readyState == 'complete' && previousLocation != windowObject.location.href && isCorrectContent ) {
                         /* Con esto evitamos confusion con el proximo enlace de maquina, en caso de redireccionar al mismo enlace ya sea por que no se encontro la maquina o otra razon. */
                         windowObject.location.hash = Math.random();
                         success();
                     } else {
-                        if ( elapsedTime >= timeout ) {
-                            This.controller.pause = true;
-                            This.checkPause('<span class="error">Tiempo de espera excedido, soluciona el problema del internet.</span>');
-                            return;
-                        } else {
-                            setTimeout(check, querySpeed);
-                        }
-                        elapsedTime += querySpeed;
+                        setTimeout(check, querySpeed);
                     }
                 })();
             };
-
-            /* Creamos la ventana si no existe, la cual abrira los enlaces originales. */
-            if ( true ) {
-                try{ 
-                    This.queryWindow  = window.open('', '', 'width=1, height=1, left=0, top=0');
-                    This.queryWindow.blur();
-                } catch(err){
-                    This.controller.pause = true;
-                    This.checkPause('<span class="error">Acepta al navegador que se permitan ventanas emergentes y vuelve a intentar.</span>');
-                    return;
-                }
+            if( This.queryWindow && This.queryWindow.closed === false ) {
+                This.queryWindow.close();
+            }
+            try{ 
+                This.queryWindow  = window.open('', '', 'width=1, height=1, left=0, top=0, directories=0, menubar=0, toolbar=0, scrollbars=1, location=1, satus=0, dependend=1');
+                This.queryWindow.blur();
+            } catch(err){
+                This.controller.pause = true;
+                This.checkPause('<span class="error">Acepta al navegador que se permitan ventanas emergentes y vuelve a intentar.</span>');
+                return;
             }
             This.queryWindow.location = machine.link;
+            /* Con esto hacemos reconexiones en caso de no cargar la solicitud, devuelve el ID del intervalo para detenerlo en caso de cargar la solicitud. Ver el metodo reconnect para ver las condiciones */
+            reconnectID = reconnectID || This.reconnect(function(){
+                stopPrev = true;
+            }, function(isReconnection, updatedReconnectID){
+                reconnectID = updatedReconnectID;
+                stopPrev = false;
+                debugMachine(isReconnection, reconnectID);
+            }, isReconnection, {timeout: 15000, maxReconnections: 5, reconnectTime: 5000});
 
             /* Llamamos a la funcion especial qe detecta la carga de la pagina siendo crossDomain. */
             onLoadCrossDomain(This.queryWindow, function(){
-                netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
+                if ( stopPrev ) {
+                    return;
+                }
+                /* Detenemos la reconeccion */
+                clearTimeout(reconnectID);
 
+                if (This.logCaller)console.log('CALLER::debugPageMachines()>debugMachine()>onLoadCrossDomain()>success');
+                netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
                 /* El metodo de validacion para calificar como vendida o no, es a continuacion */
                 var needMarkAsSold = false;
-
-                if ( new RegExp("(default\.aspx)|(notfound=)|("+This.host+")", "i").test(This.queryWindow.location.href) ) {
+                if ( new RegExp("(default\.aspx)|(notfound=)|(notfound.aspx)|("+This.host+")", "i").test(This.queryWindow.location.href) ) {
                     needMarkAsSold = true;
                 }
-
+                /*gmtrucksinc.com*//*
+                if ( jQuery(This.queryWindow.document.body).is(':contains("Could not successfully run query")') ) {
+                    needMarkAsSold = true;
+                }*/
                 if ( needMarkAsSold ) {
                     This.markedMachines.push({ 
                         id   : machine.id,
                         path : This.pathMessage(true),
-                        date : (new Date).toLocaleString()
+                        date : (new Date).toLocaleString(),
+                        link : machine.link
                     });
 
-                    console.log('link de respuesta = '+This.queryWindow.location.href+'\n\n Marcar vendida? -> '+needMarkAsSold);
-
-                    var ajax = new XMLHttpRequest();
+                    var ajax = new XMLHttpRequest(), ONE = false;
                     ajax.open('get','cambia.php?op=maquinavendida&noHeader=&maquinaid='+machine.id+'&est=Disponible');
-                    ajax.onreadystatechange = function(){
-                        if(ajax.status==200){
-                            console.log('Marcada como Vendida\n-------------------------------');
-                            next();
+                    ajax.onreadystatechange = function(){                       
+                        if(ajax.status==200 && !ONE){
+                            ONE = true;
+                            netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
+                            if (This.logRequest)console.log('REQUEST::ID='+machine.id+', Request='+machine.link+', Response=[MARKED_AS_SOLD]['+This.queryWindow.location.href+']');
                             ajax.abort();
+                            next();
                             return;
                         }
                     };
                     ajax.send();
+                } else {
+                    if (This.logRequest)console.log('REQUEST::ID='+machine.id+', Request='+machine.link+', Response=[NOT_NEED_MARK]['+This.queryWindow.location.href+']');
+                    next();
                 }
-
                 return;
             }, 10, 15000);
         };
         function next() {
-                netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
-                var pageMachinesLength = page.length;
-                if ( trackingConfig.index.machine < pageMachinesLength-1 ) {
-                    trackingConfig.index.machine++;
-                    /* Debe de haber un tiempo entre consulta minimo de 2000ms ya que rechazan solicitudes continuas */
-                    try{This.queryWindow.close();}catch(err){}
-                    setTimeout(debugMachine, 10);
-                } else {
-                    try{This.queryWindow.close();}catch(err){}
-                    success();
-                }
+            if (This.logCaller)console.log('CALLER::debugPageMachines()>debugMachine()>onLoadCrossDomain()>success>next()');
+            This.checkedMachinesAmount++;
+            This.view.message2('<b>'+(This.markedMachines.length)+' Etiquetadas </b> - <b>'+This.checkedMachinesAmount+' Analizadas</b>');
+            netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
+            var pageMachinesLength = page.length;
+            if ( trackingConfig.index.machine < pageMachinesLength-1 ) {
+                trackingConfig.index.machine++;
+                /* Debe de haber un tiempo entre consulta minimo de 2000ms ya que rechazan solicitudes continuas */
+                try{This.queryWindow.close();}catch(err){}
+                setTimeout(debugMachine, 100);
+            } else {
+                try{This.queryWindow.close();}catch(err){}
+                success();
+            }
         }
         debugMachine();
     },
@@ -463,18 +586,19 @@ imcDebugModel.prototype =
         return fixedData;
     },
 
-    checkPause: function(message)
+    checkPause: function(message, dontCloseWindow)
     {
+        netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
         /* En caso de pedir pausa se detiene el proceso, pero no se termina. */
         if ( this.controller.pause ) {
             this.controller.paused = true;
             this.view.showProcessIndicator(false);
             this.view.showButtons('resume', 'finish');
             this.view.disableCheckboxes(true);
-            if(this.queryWindow) {
+            if(this.queryWindow && !dontCloseWindow) {
                 this.queryWindow.close();
             }
-            this.view.message2(message);
+            this.view.message3(message);
             return true;
         }
         return false;
@@ -509,14 +633,13 @@ imcDebugModel.prototype =
 
         var pathdata2    = {
             page    : '',
-            machine : '',
-            marked  : '(<b>'+(this.markedMachines.length)+' Etiquetadas </b>)'
+            machine : ''
         };
         try{
             var pathP    = this.machinesData[pathdata.type][pathdata.mark][pathdata.model];
             var ipage    = trackC.index.page;
-            pathdata2.page = '<b>Pag '+(ipage+1)+' de '+( parseInt(pathP.amount/20) + (pathP.amount%20 ? 1 : 0) )+'</b>';
-            pathdata2.machine = '<b>Maq '+(trackC.index.machine+1)+' de '+pathP.pages[ipage].length+'</b>';
+            pathdata2.page = 'Pag '+(ipage+1)+' de '+( parseInt(pathP.amount/20) + (pathP.amount%20 ? 1 : 0) );
+            pathdata2.machine = 'Maq '+(trackC.index.machine+1)+' de '+pathP.pages[ipage].length;
         } catch(err){}
 
         if ( !pathdata2.page ) {
@@ -526,7 +649,7 @@ imcDebugModel.prototype =
         jQuery.each(pathdata2, function(k, v) {
             if( v ) {
                 pathText += ' > <b>'+v+'</b>';
-            } else if ( k != 'marked' ) { 
+            } else { 
                 pathText += ' > Cargando...';
                 return false;
             }
@@ -539,11 +662,13 @@ imcDebugModel.prototype =
 
 /* Clase constructora encarga de controlar el modelo y la vista, 
    quien decidira que accion tomar afectando la base de datos y la vista de la aplicación. */
-function imcDebugController() 
+function imcDebugController(logRequest, logCaller) 
 {
     if ( !this.init ) {
         alert('Debe ser un objeto, se debe instanciar.');
     }
+    this.logRequest = logRequest;
+    this.logCaller  = logCaller;
     this.init();
 }
 
@@ -561,16 +686,8 @@ imcDebugController.prototype =
             es   : ['tipo', 'marca', 'modelo']
         };
 
-        this.debugConfig = {
-            selectors : {'type': '', 'mark': '', 'model': ''},
-            /* Para guardar la cantidad de maquinas de cada seleccion y no perderlas */
-            selectorsAmount: {'type': null, 'mark': null, 'model': null},
-            /* Cantidad total de maquinas en el sistema */
-            machinesTotalAmount: null,
-            /* Para para del GET del selector modelo, el modeloid */
-            modeloid: null,
-            checkPhases: { phase1: false, phase2: false, phase3: false, buyProjects: false }
-        };
+        this.resetConfig();
+
         this.pause    = false;
         this.paused   = false;
         this.started  = false;
@@ -582,18 +699,67 @@ imcDebugController.prototype =
         this.model       = new imcDebugModel(this, this.selectors.ns);
         this.indexAction();
     },
+
+    resetConfig: function()
+    {
+        if( ! this.debugConfig ) {
+            this.debugConfig = {
+                selectors : {'type': '', 'mark': '', 'model': ''},
+                /* Para guardar la cantidad de maquinas de cada seleccion y no perderlas */
+                selectorsAmount: {'type': null, 'mark': null, 'model': null},
+                /* Cantidad total de maquinas en el sistema */
+                machinesTotalAmount: null,
+                /* Para para del GET del selector modelo, el modeloid */
+                modeloid: null,
+                checkPhases: { phase1: false, phase2: false, phase3: false, buyProjects: false }
+            };
+        } else {
+            this.debugConfig.selectors = {'type': '', 'mark': '', 'model': ''};
+            this.debugConfig.selectorsAmount = {'type': null, 'mark': null, 'model': null};
+            this.debugConfig.modeloid = null;
+        }
+
+        this.trackingConfig = {
+            index         : {
+                type   : 0,
+                mark   : 0,
+                model  : 0,
+                page   : 0,
+                machine: 0
+            },
+            getDataConfig : {}
+        };
+    },
     
     /* Acción por default */
     indexAction: function()
     {
         this.view.message1('');
-        this.view.message2('Preparando...');
+        this.view.message2('');
+        this.view.message3('Preparando...');
         /* Accionamos el selectAction por default al selector de tipos de máquinas. */ 
         this.fillSelectorAction(this.selectors.ns[0]);
     },
 
-    selectSelectorAction: function(selectorNS, value, amount, modeloid)
-    {
+    selectSelectorAction: function(selectObject)
+    {  
+        if ( !this.finished ) {
+            this.view.message1('');
+            this.view.message2('');
+        } else {            
+            this.finished = false;
+            this.finish   = false;
+        }
+
+        var selectorNS = selectObject.id.replace(/.*-/i, '');
+        this.view.disableSelector(selectorNS, false)
+            .doNextSelector(selectorNS, 'clearSelector');
+
+        var amount   = jQuery(selectObject).find('option:selected').text().replace(/,/g,'').match(/\(\d*\)/)[0].replace(/\(|\)/g,'').replace(/,/g, '');
+            amount   = parseInt(amount);
+        var modeloid = jQuery(selectObject).find('option:selected').attr('modeloid');
+        var value    = selectObject.value;
+
         /* Guardamos la configuracion del selector seleccionado */
         this.debugConfig.selectors[selectorNS]       = value;
         this.debugConfig.selectorsAmount[selectorNS] = amount;
@@ -611,7 +777,8 @@ imcDebugController.prototype =
         var selectorIndex = jQuery.inArray(selectorNS, this.selectors.ns);
         var nextSelector  = this.selectors.ns[selectorIndex+1];
         if ( nextSelector ) {
-            this.view.message2('Cargando '+this.selectors.es[selectorIndex+1]+'s');
+            this.view.showProcessIndicator(true);
+            this.view.message3('Cargando '+this.selectors.es[selectorIndex+1]+'s');
             this.fillSelectorAction(nextSelector);
         }
 
@@ -660,7 +827,11 @@ imcDebugController.prototype =
         this.view.disableSelector('type', true);
 
         this.model.getSelectorData(selectorNS, currentSelection, function(resultData) {
-            This.view.message2('Esperando inicio');
+
+            if (This.logCaller)
+                console.log('CALLER::fillSelectorAction()>getSelectorData()>success');
+
+            This.view.message3('Esperando inicio');
             This.view.showButtons('start', 'close');
 
             jQuery.each(This.selectors.ns, function(i, ns){
@@ -688,16 +859,6 @@ imcDebugController.prototype =
         this.view.disableCheckboxes(true);
 
         var This = this;
-        this.trackingConfig = {
-            index         : {
-                type   : 0,
-                mark   : 0,
-                model  : 0,
-                page   : 0,
-                machine: 0
-            },
-            getDataConfig : {}
-        };
         jQuery.each(this.debugConfig.selectors, function(ns, selectorValue) {
             This.trackingConfig.index[ns]    = 0;
             This.trackingConfig.getDataConfig[ns] = selectorValue;
@@ -706,25 +867,26 @@ imcDebugController.prototype =
         var isEmpty = !Object.keys(this.model.machinesData).length;
         if ( isEmpty ) {
             this.model.getSelectorData(this.selectors.ns[0], '', function(notFixedData){
-                This.view.message2('DEPURANDO');
                 This.model.machinesData = This.model.fixData(notFixedData);
-                This.model.debuggingProcess(This.trackingConfig, function(){
-                    This.success();        
-                });
+                This.model.debuggingProcess(This.trackingConfig);
             });
         } else {
-            This.view.message2('DEPURANDO');
-            this.model.debuggingProcess(this.trackingConfig, function(){ 
-                This.success();
-            });
+            this.model.debuggingProcess(this.trackingConfig);
         }
     },
 
     startAction: function()
     {
+        this.model.startedTime = new Date;
+        this.model.finishedTime = undefined;
+        this.model.checkedMachinesAmount = 0;
+        this.model.markedMachines = [];
         this.view.showProcessIndicator(true);
-        this.view.message2('Iniciando...');
+        this.view.message1('');
+        this.view.message2('');
+        this.view.message3('Iniciando...');
         this.finished = false;
+        this.finish   = false;
         this.started  = true;
         this.view.disableSelector('type', true);
         this.view.showButtons();
@@ -734,7 +896,7 @@ imcDebugController.prototype =
     pauseAction: function()
     {
         this.view.showProcessIndicator(true);
-        this.view.message2('Pausando...');
+        this.view.message3('Pausando...');
         this.pause = true;
         this.view.showButtons();
     },
@@ -742,38 +904,63 @@ imcDebugController.prototype =
     resumeAction: function()
     {
         this.view.showProcessIndicator(true);
-        this.view.message2('Reanudando...');
+        this.view.message3('Reanudando...');
         this.pause  = false;
         this.paused = false;
-        var This    = this;
-        this.model.debuggingProcess(this.trackingConfig, function(){ This.success() });
+        this.view.disableSelector('type', true);
+        this.model.debuggingProcess(this.trackingConfig);
         this.view.showButtons('pause');
-        this.view.disableCheckboxes(false);
+        this.view.disableCheckboxes(true);
     },
 
     finishAction: function()
     {
+
+        if (this.logCaller)
+            console.log('CALLER::finishAction()');
+        
         this.view.showProcessIndicator(true);
-        this.view.message2('Terminando...');
+        this.view.message3('Terminando...');
         this.pause = false;
         this.paused = false;
+        this.finish = true;
         this.view.disableSelector('type', false);
         this.view.disableCheckboxes(false);
-        this.view.showButtons('start', 'close'); 
-        this.success();
+        this.view.showButtons('');
+        this.model.finishedTime = new Date;
+        var regexpHour = /(\d\d:?){3} \w\.\w\./i;
+        var hStarted   = this.model.startedTime.toLocaleString().match(regexpHour)[0];
+        var hFinished  = this.model.finishedTime.toLocaleString().match(regexpHour)[0];
+        if (this.model.markedMachines.length == 0) {
+            this.finished = true;
+            this.view.showProcessIndicator(false);
+            this.view.showButtons('start', 'close'); 
+            this.view.message3('TERMINADO! - No se etiquetaron máquinas <br /> Comenzado: '+hStarted+', Terminado: '+hFinished);
+        } else {
+            this.success(hStarted, hFinished);
+            this.view.message3('TERMINADO! <br /> Comenzado: '+hStarted+', Terminado: '+hFinished);
+        }
+        this.resetConfig();
+        try{
+            this.selectSelectorAction(jQuery('#'+this.view.domIDs.type).val(0)[0]);
+        } catch(err) {}
     },
 
-    success: function(){
-        if (this.model.markedMachines == 0) {
-            this.view.showProcessIndicator(false);
-            this.view.message1('');
-            this.view.message2('No hubo etiquetadas.');
-            return;
-        }
+    success: function(hStarted, hFinished){
+
+        if (this.logCaller)
+            console.log('CALLER::finishAction()>success()');   
+
         var This = this;
+        var basePath = "";
+        with (this.debugConfig.selectors) {
+            basePath = ( type ? type : "Todas las máquinas" ) + " - ";
+            basePath += ( mark ? mark : "todas las marcas" ) + " - ";
+            basePath += ( model ? model : "todos los modelos" );
+        }
         this.view.showProcessIndicator(true);
-        this.resultWindow = window.open('','','width='+(screen.availWidth/2)+', height='+(screen.availHeight/2)+', top=0, left=0');
-        this.title = 'Máquinas etiquetadas - '+(new Date).toLocaleString();
+        this.resultWindow = window.open('','','width='+(screen.availWidth/2)+', height='+(screen.availHeight/2)+', top=0, left=0, directories=1, menubar=1, toolbar=1, scrollbars=1, location=1, satus=1, dependend=1');
+        this.resultWindow.document.title = basePath + " - " + this.model.markedMachines.length + 'Et-' + this.model.checkedMachinesAmount + "An";
         var regexpHour = /(\d\d:?){3} \w\.\w\./i;
         var $body = jQuery(this.resultWindow.document.body);
         var partofcontent = 
@@ -784,11 +971,12 @@ imcDebugController.prototype =
         '       font-family : calibri;\n'+
         '   }\n'+
         '   h1 {\n'+
-        '       margin      : 15px auto;\n'+
+        '       text-align  : center;\n'+
+        '       margin      : 15px;\n'+
         '       text-shadow : 0 0 3px #666;\n'+
         '   }\n'+
-        '   h2 {\n'+
-        '       margin-left : 10%;\n'+
+        '   h3 {\n'+
+        '       padding-left: 10%;\n'+
         '   }\n'+
         '   table {\n'+
         '       border-collapse : collapse;\n'+
@@ -815,20 +1003,21 @@ imcDebugController.prototype =
         '   }\n'+
         '</style>\n'+
         '<h1>Máquinas etiquetadas el '+((new Date).toLocaleString().replace(regexpHour, ''))+'</h1>\n'+
-        '<h2>'+this.model.markedMachines.length+' etiquetadas</h2>\n'+
+        '<h3>'+this.model.markedMachines.length+' Etiquetadas, '+this.model.checkedMachinesAmount+' Analizadas - Comenzado a las '+hStarted+', Terminado a las '+hFinished+'</h3>\n'+
         '<table>\n'+
         '   <tr class="columnnames">\n'+
-        '       <td>N°</td><td>Referencia</td><td>Tipo</td><td>Hora etiquetada</td>\n'+
+        '       <td>N°</td><td>Referencia</td><td>Enlace</td><td>Tipo</td><td>Hora etiquetada</td>\n'+
         '   </tr>\n'+
         '</table>\n'
         ;
         var $table = $body.append(partofcontent).find('table');
 
         jQuery.each(this.model.markedMachines, function(i, machine){
-            var urlMachine = 'http://'+This.model.host+'/mdetalles.php?ID='+machine.id;
+            var imcUrl = 'http://'+This.model.host+'/mdetalles.php?ID='+machine.id;
+            var machineUrl = machine.link; 
             $table.append(
             '   <tr class="machinedata">\n'+
-            '       <td>'+(i+1)+'</td><td><a href="'+urlMachine+'" target="_blank">'+(machine.id)+'</a></td><td>'+(machine.path)+'</td><td>'+(machine.date.match(regexpHour)[0])+'</td>\n'+
+            '       <td>'+(i+1)+'</td><td><a href="'+imcUrl+'" target="_blank" title="Click para abrir enlace de la máquina en IMC">'+(machine.id)+'</a></td><td><a href="'+machineUrl+'" target="_blank" title="Abrir menu con click derecho para copiar.">Abrir</a></td><td>'+(machine.path)+'</td><td>'+(machine.date.match(regexpHour)[0])+'</td>\n'+
             '   </tr>\n'
             );
         });
@@ -838,11 +1027,9 @@ imcDebugController.prototype =
             '   var markedMachines = '+This.model.markedMachines.toSource()+';\n'+
             '</script>\n'
         );
+        this.view.showButtons('start', 'close'); 
         this.view.showProcessIndicator(false);
-        this.view.message1('');
-        this.view.message2('TERMINADO!');
-        /* Quitamos el bloqueo de la pagina */
-        window.removeEventListener('beforeunload', prevUnLoadFunc, false);
+        this.finished = true;
     }
 
 };
@@ -870,7 +1057,7 @@ imcDebugView.prototype =
         this.processInterval = '';
 
         /* Definiendo los identificadores para el DOM de la aplicación.*/
-        this.domNSID = 'imcDebugView';
+        this.domNSID = 'imcDebugView'+Math.random().toString().replace('.','');
         this.domIDs  = {
             ct         : this.domNSID,
             ctSettings : this.domNSID+'-settings',
@@ -889,7 +1076,8 @@ imcDebugView.prototype =
             process    : this.domNSID+'-process',
             ctMessages : this.domNSID+'-ctMessages',
             message1   : this.domNSID+'-message1',
-            message2   : this.domNSID+'-message2'
+            message2   : this.domNSID+'-message2',
+            message3   : this.domNSID+'-message3'
         };
 
         /* Identificadores y codigo del DOM para los selectores dependiendo de la cantidad de los mismos. */
@@ -927,7 +1115,8 @@ imcDebugView.prototype =
             '   </div>\n'+
             '   <div id="'+this.domIDs.ctMessages+'">\n'+
             '       <div id="'+this.domIDs.message1+'"></div>\n'+
-            '       <div id="'+this.domIDs.message2+'">Esperando inicio</div>\n'+
+            '       <div id="'+this.domIDs.message2+'"></div>\n'+
+            '       <div id="'+this.domIDs.message3+'">Esperando inicio</div>\n'+
             '   </div>\n'+
             '   <div id="'+this.domIDs.ctControls+'">\n'+
             '       <button id="'+this.domIDs.start+'">Iniciar</button><button id="'+this.domIDs.pause+'">Pausar</button><button id="'+this.domIDs.resume+'">Reanudar</button><button id="'+this.domIDs.finish+'">Terminar</button>\n'+
@@ -1029,14 +1218,22 @@ imcDebugView.prototype =
             '    margin-bottom : 8px;\n'+
             '}\n'+
             '#'+this.domIDs.message1+'{\n'+
-            '    border-bottom : 4px double #000;\n'+
+            '\n'+
             '}\n'+
             '#'+this.domIDs.message2+'{\n'+
-            '    font-size: 16px;\n'+
+            '    font-size   : 16px;\n'+
+            '    color       : blue;\n'+
+            '    border-bottom : 4px double #000;\n'+
+            '}\n'+
+            '#'+this.domIDs.message3+'{\n'+
+            '    font-size   : 16px;\n'+
             '}\n'+
             '#'+this.domIDs.ct+' .error {\n'+
-            '    font-size: 18px;\n'+
-            '    color    : red;\n'+
+            '    font-size   : 18px;\n'+
+            '    color       : red;\n'+
+            '}\n'+
+            '#'+this.domIDs.ct+' b {\n'+
+            '    font-weight  : bold !important;\n'+
             '}\n'+
             '</style>\n\n'
         );
@@ -1046,17 +1243,7 @@ imcDebugView.prototype =
         var This = this;
         /* Evento onchange para los selectores */ 
         jQuery('#'+this.domIDs.ctSelectors).find('select').change(function(){
-
-            This.showProcessIndicator(true);
-
-            var selectorNS = this.id.replace(/.*-/i, '');
-            This.disableSelector(selectorNS, false)
-                .doNextSelector(selectorNS, 'clearSelector');
-
-            var amount   = jQuery(this).find('option:selected').text().replace(/,/g,'').match(/\(\d*\)/)[0].replace(/\(|\)/g,'').replace(/,/g, '');
-            var modeloid = jQuery(this).find('option:selected').attr('modeloid');
-            This.controller.selectSelectorAction(selectorNS, this.value, parseInt(amount), modeloid);
-
+            This.controller.selectSelectorAction(this);
         });
 
         /* Evento onchange para los checbox */
@@ -1196,11 +1383,15 @@ imcDebugView.prototype =
     message2: function(msg) 
     {
         jQuery('#'+this.domIDs.message2).html(msg);
+    },
+
+    message3: function(msg)
+    {
+        jQuery('#'+this.domIDs.message3).html(msg);
     }
     
 };
 
-var imcDebug;
 var prevUnLoadFunc = function(ev){ev.preventDefault();};
 var scriptjQuery = document.createElement('script');
 scriptjQuery.type= 'text/javascript';
@@ -1225,10 +1416,12 @@ scriptjQueryUI.src = 'https://ajax.googleapis.com/ajax/libs/jqueryui/1.8.18/jque
         document.body.appendChild(scriptjQueryUI);
         scriptjQueryUI.onload = function() {
             window.addEventListener('beforeunload', prevUnLoadFunc, false);
-            imcDebug = new imcDebugController();
+            /* arg1: logRequest, arg2:logCaller */
+            window.imcDebug = new imcDebugController(true, true);
             $imcDebugView = jQuery('#'+imcDebug.view.domIDs.ct).draggable().draggable({handle:'h1', containment:'window'});
             $imcDebugView.bind('dragstart', function(){
                     jQuery(this).css('right', 'auto');
             });
         };    
     }
+void(0);

@@ -534,12 +534,6 @@ imcDebugModel.prototype =
                     needMarkAsSold = true;
                 }*/
                 if ( needMarkAsSold ) {
-                    This.markedMachines.push({ 
-                        id   : machine.id,
-                        path : This.pathMessage(true),
-                        date : (new Date).toLocaleString(),
-                        link : machine.link
-                    });
 
                     var callee = arguments.callee;
                     /* Reconexiones para cuando se intenta enviar la solitud de etiquetado */
@@ -548,6 +542,7 @@ imcDebugModel.prototype =
                             /* Cambio a queryFrame para la solucion temporal */
                             netscape.security.PrivilegeManager.enablePrivilege("UniversalXPConnect");
                             This.queryFrame.stop();
+                            This.$queryFrame.unbind('load');
                             /* ajax200.abort() */
                         }, 
                         function(isReconnection, updatedReconnectID){
@@ -589,6 +584,12 @@ imcDebugModel.prototype =
                     ajax200('cambia.php?op=maquinavendida&noHeader=&maquinaid='+machine.id+'&est=Disponible', 
                         function() {
                             clearTimeout(reconnectID2);
+                            This.markedMachines.push({ 
+                                id   : machine.id,
+                                path : This.pathMessage(true),
+                                date : (new Date).toLocaleString(),
+                                link : machine.link
+                            });
                             netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
                             if (This.logRequest)console.log('REQUEST::ID='+machine.id+', Request='+machine.link+', Response=[MARKED_AS_SOLD]['+This.queryWindow.location.href+']');
                             next();
@@ -602,9 +603,15 @@ imcDebugModel.prototype =
                     This.$queryFrame.load(function() {
                         This.queryFrame.addEventListener('unload', function(){
                             clearTimeout(reconnectID2);
+                            This.markedMachines.push({ 
+                                id   : machine.id,
+                                path : This.pathMessage(true),
+                                date : (new Date).toLocaleString(),
+                                link : machine.link
+                            });
+                            This.$queryFrame.unbind('load');
                             netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
                             if (This.logRequest)console.log('REQUEST::ID='+machine.id+', Request='+machine.link+', Response=[MARKED_AS_SOLD]['+This.queryWindow.location.href+']');
-                            This.$queryFrame.unbind('load');
                             next();
                         }, false);
                         This.queryFrame.document.formulario.est.value = 'Vendida';

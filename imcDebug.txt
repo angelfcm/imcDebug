@@ -97,6 +97,7 @@ imcDebugModel.prototype =
             This.getSelectorData(selectorNS, selectorsConfig, success, isReconnection, reconnectID);
         }, isReconnection, {timeout: 15000, maxReconnections: 3, reconnectTime: 3000});
 
+        this.$queryFrame.attr('src', 'about:blank');
         /* Abrimos el archivo con la consulta del selector y definimos la funcion al cargarse el contenido. */
         this.$queryFrame.attr('src', queryFile+'?'+urlGetData);
 
@@ -107,6 +108,7 @@ imcDebugModel.prototype =
         var This = this;       
         this.$queryFrame.unbind('load');
         this.$queryFrame.load( function() {
+            This.$queryFrame.unbind('load');
             /* Detenemos las reconexiones */
             clearTimeout(reconnectID);
             This.view.message3("Preparando");
@@ -163,12 +165,15 @@ imcDebugModel.prototype =
             This.view.message3("DEPURANDO");
         }, isReconnection, {timeout: 15000, maxReconnections: 3, reconnectTime: 3000});
 
+        this.$queryFrame.attr('src', 'about:blank');
         /* Abrimos el archivo con la consulta del selector y definimos la funcion al cargarse el contenido. */
         this.$queryFrame.attr('src', queryFile+'?'+urlGetData);
         this.$queryFrame.unbind('load');
 
         this.$queryFrame.load( function() {
 
+            /* Es importante quitar el evento load ya que al agregarlo con jQuery, este no se pierde aunque se recargue */
+            This.$queryFrame.unbind('load');
             /* Detenemos las reconexiones */
             clearTimeout(reconnectID);
             This.view.message3("DEPURANDO");
@@ -219,6 +224,7 @@ imcDebugModel.prototype =
         var reconnections    = 0;
         var This = this;
         var fn = function(){
+            This.$queryFrame.unbind('load');
             if ( typeof onBeforeReconnect == 'function' ) {
                 onBeforeReconnect();
             }
@@ -503,12 +509,18 @@ imcDebugModel.prototype =
             }, isReconnection, {timeout: 15000, maxReconnections: 5, reconnectTime: 5000});
 
             /* Llamamos a la funcion especial qe detecta la carga de la pagina siendo crossDomain. */
-            onLoadCrossDomain(This.queryWindow, function(){
+            onLoadCrossDomain(This.queryWindow, function(isReconnection, reconnectID2){
                 if ( stopPrev ) {
                     return;
                 }
                 /* Detenemos la reconeccion */
                 clearTimeout(reconnectID);
+
+                if ( This.checkPause('Pausado por el usuario.') ) {
+                    clearTimeout(reconnectID2);
+                    /*ajax.abort();*/
+                    return;
+                }
 
                 if (This.logCaller)console.log('CALLER::debugPageMachines()>debugMachine()>onLoadCrossDomain()>success');
                 netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
@@ -529,19 +541,77 @@ imcDebugModel.prototype =
                         link : machine.link
                     });
 
-                    var ajax = new XMLHttpRequest(), ONE = false;
-                    ajax.open('get','cambia.php?op=maquinavendida&noHeader=&maquinaid='+machine.id+'&est=Disponible');
-                    ajax.onreadystatechange = function(){                       
-                        if(ajax.status==200 && !ONE){
-                            ONE = true;
+                    var callee = arguments.callee;
+                    /* Reconexiones para cuando se intenta enviar la solitud de etiquetado */
+                    reconnectID2 = reconnectID2 || This.reconnect(
+                        function(){
+                            /* Cambio a queryFrame para la solucion temporal */
+                            netscape.security.PrivilegeManager.enablePrivilege("UniversalXPConnect");
+                            This.queryFrame.stop();
+                            /* ajax200.abort() */
+                        }, 
+                        function(isReconnection, updatedReconnectID){
+                            reconnectID2 = updatedReconnectID;
+                            This.view.message3("DEPURANDO");
+                            callee(isReconnection, reconnectID2);
+                        }, 
+                        isReconnection, {timeout: 20000, maxReconnections: 3, reconnectTime: 3000}
+                    );
+
+                    /*Abre el enlace y evita redirecciones*/
+                    function ajax200(file, success) {
+                        var ajax = new XMLHttpRequest(), ONE = false;
+                        ajax.open('get',file);
+                        var t = setInterval(function(){
+                            if ( This.checkPause('Pausado por el usuario.') ) {
+                                clearTimeout(reconnectID2);
+                                clearInterval(t);
+                                ajax.abort();
+                            }
+                        }, 500);
+                        ajax.onreadystatechange = function(){                                               
+                            if(ajax.status==200 && !ONE){
+                                ONE = true;
+                                ajax.abort();
+                                clearInterval(t);
+                                success();
+                                return;
+                            }
+                        };
+                        ajax.send();
+                        /* Por si es necesario abortar desde fuera */
+                        return ajax;
+                    }
+                    
+                    /* Se solicita el etiquetado */
+                    /* Solucion de etiqueado normal, comentado para utilizar la forma por frame */
+                    /*
+                    ajax200('cambia.php?op=maquinavendida&noHeader=&maquinaid='+machine.id+'&est=Disponible', 
+                        function() {
+                            clearTimeout(reconnectID2);
                             netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
                             if (This.logRequest)console.log('REQUEST::ID='+machine.id+', Request='+machine.link+', Response=[MARKED_AS_SOLD]['+This.queryWindow.location.href+']');
-                            ajax.abort();
                             next();
-                            return;
                         }
-                    };
-                    ajax.send();
+                    );*/
+
+                    /* Solución temporal para registrar las etiquetadas como modificadas */
+                    This.$queryFrame.attr('src', 'about:blank');
+                    This.$queryFrame.attr('src', 'consolamaquinas.php?maquinaID='+machine.id);     
+                    This.$queryFrame.unbind('load');
+                    This.$queryFrame.load(function() {
+                        This.queryFrame.addEventListener('unload', function(){
+                            clearTimeout(reconnectID2);
+                            netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
+                            if (This.logRequest)console.log('REQUEST::ID='+machine.id+', Request='+machine.link+', Response=[MARKED_AS_SOLD]['+This.queryWindow.location.href+']');
+                            This.$queryFrame.unbind('load');
+                            next();
+                        }, false);
+                        This.queryFrame.document.formulario.est.value = 'Vendida';
+                        This.queryFrame.document.formulario.submit();
+                    });
+                    /* Aqui termina la solucion temporal */
+
                 } else {
                     if (This.logRequest)console.log('REQUEST::ID='+machine.id+', Request='+machine.link+', Response=[NOT_NEED_MARK]['+This.queryWindow.location.href+']');
                     next();
@@ -593,6 +663,8 @@ imcDebugModel.prototype =
         netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
         /* En caso de pedir pausa se detiene el proceso, pero no se termina. */
         if ( this.controller.pause ) {
+            this.$queryFrame.stop();
+            this.$queryFrame.unbind('load');
             this.controller.paused = true;
             this.view.showProcessIndicator(false);
             this.view.showButtons('resume', 'finish');
